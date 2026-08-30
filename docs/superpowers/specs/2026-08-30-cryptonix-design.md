@@ -97,9 +97,11 @@ a crash in one monitor does not affect the others or the API server.
   re-backfilling.
 - **coin scanner** — subscribes to pump.fun/Raydium mint activity via
   Helius. Tracks each new token's first minutes: volume, unique buyers,
-  buy/sell ratio, liquidity added. Scores momentum on a rolling window
-  and emits an alert once a token crosses threshold. No per-token setup
-  required.
+  buy/sell ratio, liquidity added. Resolves each token's real image and
+  name from its on-chain metadata (Metaplex URI, via Helius's DAS
+  `getAsset`) at discovery time, so alerts carry the actual coin art, not
+  a placeholder. Scores momentum on a rolling window and emits an alert
+  once a token crosses threshold. No per-token setup required.
 - **twitter monitor** — on registration, resolves the handle through the
   scraper API and returns the real account (name, avatar, follower
   count, verified badge) for confirmation before tracking starts. Then
@@ -147,6 +149,14 @@ layout — custom-designed, not a generic dashboard template:
 Connects to the deployed `engine` over WebSocket (live) + REST
 (queries), same data contract the Discord bot uses.
 
+**Real imagery, not placeholders:** every surface renders the actual
+image for what it's showing — the coin's real on-chain logo, the X
+account's real avatar, and real tweet media when a tracked tweet has
+an image attached. Wallets are the one exception: a raw Solana address
+has no inherent picture, so wallet rows use a deterministically
+generated identicon (address → pattern, same approach Phantom/MetaMask
+use), not a photo.
+
 ## 6. Data model (Postgres, via Drizzle ORM)
 
 Core tables (exact columns refined during implementation):
@@ -159,7 +169,7 @@ Core tables (exact columns refined during implementation):
 - `twitter_accounts` (handle, resolved_user_id, display_name, avatar_url,
   added_at)
 - `tweets_seen` (account_id, tweet_id, text, media, ts)
-- `coin_alerts` (mint, momentum_score, stats_json, ts)
+- `coin_alerts` (mint, image_uri, momentum_score, stats_json, ts)
 - `alerts` (unified feed: type, ref_id, payload_json, ts) — the single
   stream both front ends subscribe to.
 
