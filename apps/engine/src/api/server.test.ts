@@ -684,4 +684,60 @@ describe('engine API', () => {
     const alertsRes = await api(app).get('/alerts?since=0');
     expect(alertsRes.body[0].id).toBeGreaterThan(0);
   });
+
+  it('GET /alerts/head reports the NEWEST id, not the oldest', async () => {
+    // listAlertsSince(0) cannot serve this: it returns an ascending, capped
+    // page, so a client using it as the head would resume from the oldest row
+    // and replay real history.
+    const app = buildApp();
+    await api(app).post('/wallets').send({ address: VALID_ADDRESS, label: 'W' });
+
+    expect((await api(app).get('/alerts/head')).body.id).toBe(0);
+
+    for (const sig of ['h1', 'h2', 'h3']) {
+      await request(app)
+        .post('/webhooks/helius')
+        .set('Authorization', WEBHOOK_SECRET)
+        .send([
+          {
+            signature: sig,
+            timestamp: 1_787_000_000,
+            type: 'SWAP',
+            tokenTransfers: [{ fromUserAccount: 'Pool', toUserAccount: VALID_ADDRESS, mint: 'M', tokenAmount: 1 }],
+            nativeTransfers: [{ fromUserAccount: VALID_ADDRESS, toUserAccount: 'Pool', amount: 1_000_000_000 }],
+          },
+        ]);
+    }
+
+    const all = await api(app).get('/alerts?since=0');
+    const head = await api(app).get('/alerts/head');
+
+    expect(head.body.id).toBe(Math.max(...all.body.map((a: { id: number }) => a.id)));
+    // Resuming from the head yields nothing, which is the whole point.
+    expect((await api(app).get(`/alerts?since=${head.body.id}`)).body).toHaveLength(0);
+  });
+
+  it('untracking a wallet also removes its alerts', async () => {
+    // alerts.ref_id has no foreign key, so nothing else would delete them and
+    // the replay endpoint could push an untracked wallet's trades to Discord.
+    const app = buildApp();
+    const created = await api(app).post('/wallets').send({ address: VALID_ADDRESS, label: 'W' });
+    await request(app)
+      .post('/webhooks/helius')
+      .set('Authorization', WEBHOOK_SECRET)
+      .send([
+        {
+          signature: 'to-be-removed',
+          timestamp: 1_787_000_000,
+          type: 'SWAP',
+          tokenTransfers: [{ fromUserAccount: 'Pool', toUserAccount: VALID_ADDRESS, mint: 'M', tokenAmount: 1 }],
+          nativeTransfers: [{ fromUserAccount: VALID_ADDRESS, toUserAccount: 'Pool', amount: 1_000_000_000 }],
+        },
+      ]);
+    expect((await api(app).get('/alerts?since=0')).body).toHaveLength(1);
+
+    await api(app).delete(`/wallets/${created.body.id}`);
+
+    expect((await api(app).get('/alerts?since=0')).body).toHaveLength(0);
+  });
 });

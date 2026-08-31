@@ -1,6 +1,6 @@
 import type { Db } from '@cryptonix/db';
 import { wallets, walletTrades, pnlDaily, alerts } from '@cryptonix/db';
-import { and, eq, isNull } from 'drizzle-orm';
+import { and, eq, inArray, isNull } from 'drizzle-orm';
 import { parseSwap, buildAxiomLink, type HeliusEnhancedTransaction } from '@cryptonix/core';
 import type { HeliusClient } from '../helius/client.js';
 import type { AlertBus } from '../api/alert-bus.js';
@@ -139,6 +139,21 @@ export class WalletMonitor {
       // stale id would make the row look tracked while silently receiving
       // nothing, forever.
       await this.db.update(wallets).set({ heliusWebhookId: null }).where(eq(wallets.id, walletId));
+    }
+
+    // Alerts reference trades by ref_id with no foreign key, so nothing else
+    // would remove them. Left behind, the /alerts replay endpoint could still
+    // push an untracked wallet's trades into Discord long after it was removed.
+    // They go first, while the trade ids are still available to match on.
+    const tradeRows = await this.db
+      .select({ id: walletTrades.id })
+      .from(walletTrades)
+      .where(eq(walletTrades.walletId, walletId));
+    const tradeIds = tradeRows.map((row) => row.id);
+    if (tradeIds.length > 0) {
+      await this.db
+        .delete(alerts)
+        .where(and(inArray(alerts.refId, tradeIds), inArray(alerts.type, ['wallet_buy', 'wallet_sell'])));
     }
 
     // Children before parent: both tables carry a FK onto wallets.id.

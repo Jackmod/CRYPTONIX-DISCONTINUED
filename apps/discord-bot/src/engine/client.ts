@@ -107,6 +107,19 @@ export class EngineClient {
     return res.json() as Promise<AlertRecord[]>;
   }
 
+  /**
+   * The newest alert id, or 0 when there are none.
+   *
+   * Used to resume from "now" on a first run. listAlertsSince(0) cannot serve
+   * this: it returns an ascending, capped page, so it would hand back the
+   * OLDEST rows and make the next catch-up replay real history.
+   */
+  async getAlertHead(): Promise<number> {
+    const res = await this.request('/alerts/head');
+    const body = (await res.json()) as { id?: number };
+    return typeof body.id === 'number' ? body.id : 0;
+  }
+
   async listGuildConfigs(): Promise<GuildConfig[]> {
     const res = await this.request('/discord/guilds');
     return res.json() as Promise<GuildConfig[]>;

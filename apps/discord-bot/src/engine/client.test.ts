@@ -163,4 +163,27 @@ describe('EngineClient', () => {
     expect(url).toBe('http://engine:8787/discord/guilds/g1');
     expect(options.method).toBe('DELETE');
   });
+
+  it('reads the alert head', async () => {
+    (fetch as ReturnType<typeof vi.fn>).mockResolvedValue({ ok: true, status: 200, json: async () => ({ id: 42 }) });
+
+    const head = await new EngineClient('http://engine:8787', 'k').getAlertHead();
+
+    expect(head).toBe(42);
+    expect((fetch as ReturnType<typeof vi.fn>).mock.calls[0][0]).toBe('http://engine:8787/alerts/head');
+  });
+
+  it('treats a missing head id as 0', async () => {
+    (fetch as ReturnType<typeof vi.fn>).mockResolvedValue({ ok: true, status: 200, json: async () => ({}) });
+
+    expect(await new EngineClient('http://engine:8787', 'k').getAlertHead()).toBe(0);
+  });
+
+  it('passes the since cursor when listing alerts', async () => {
+    (fetch as ReturnType<typeof vi.fn>).mockResolvedValue({ ok: true, status: 200, json: async () => [] });
+
+    await new EngineClient('http://engine:8787', 'k').listAlertsSince(17);
+
+    expect((fetch as ReturnType<typeof vi.fn>).mock.calls[0][0]).toBe('http://engine:8787/alerts?since=17');
+  });
 });

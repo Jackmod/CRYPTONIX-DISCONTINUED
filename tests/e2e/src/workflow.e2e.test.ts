@@ -249,3 +249,65 @@ describe('end-to-end: alerts missed while disconnected', () => {
     expect(viaRest[0].id).toBeGreaterThan(0);
   });
 });
+
+describe('end-to-end: catch-up cursor', () => {
+  it('resuming from the head replays nothing, even with history present', async () => {
+    // The bug this guards: using listAlertsSince(0) as the head returns the
+    // OLDEST capped page, so a restart replayed real history into channels.
+    stack = await startStack();
+    await stack.engine.trackWallet(ADDRESSES[0], 'Whale', false);
+
+    for (let i = 0; i < 5; i++) {
+      await deliver(stack.baseUrl, [buyTx(ADDRESSES[0], `head-sig-${i}`, 'MintH', 1, 10, 1_788_000_000 + i)]);
+    }
+    await new Promise((r) => setTimeout(r, 300));
+
+    const head = await stack.engine.getAlertHead();
+    const all = await stack.engine.listAlertsSince(0);
+
+    expect(head).toBe(Math.max(...all.map((a) => a.id)));
+    expect(await stack.engine.listAlertsSince(head)).toHaveLength(0);
+  }, 30_000);
+
+  it('walks past the page cap so a long outage loses nothing', async () => {
+    // The engine caps a page at 50. A single un-paginated request left
+    // everything beyond that undelivered.
+    stack = await startStack();
+    await stack.engine.trackWallet(ADDRESSES[0], 'Whale', false);
+
+    const batch = Array.from({ length: 60 }, (_, i) =>
+      buyTx(ADDRESSES[0], `page-sig-${i}`, 'MintP', 0.1, 5, 1_788_100_000 + i)
+    );
+    await deliver(stack.baseUrl, batch);
+    await new Promise((r) => setTimeout(r, 500));
+
+    // One request is capped...
+    const firstPage = await stack.engine.listAlertsSince(0);
+    expect(firstPage).toHaveLength(50);
+
+    // ...so a client must keep asking, which is what catchUpOnMissedAlerts does.
+    let cursor = Math.max(...firstPage.map((a) => a.id));
+    let total = firstPage.length;
+    for (;;) {
+      const page = await stack.engine.listAlertsSince(cursor);
+      if (page.length === 0) break;
+      total += page.length;
+      cursor = Math.max(...page.map((a) => a.id));
+      if (page.length < 50) break;
+    }
+
+    expect(total).toBe(60);
+  }, 60_000);
+
+  it("drops an untracked wallet's alerts so they cannot be replayed", async () => {
+    stack = await startStack();
+    const wallet = await stack.engine.trackWallet(ADDRESSES[0], 'Temp', false);
+    await deliver(stack.baseUrl, [buyTx(ADDRESSES[0], 'replay-sig', 'MintR', 1, 10, 1_788_200_000)]);
+    await new Promise((r) => setTimeout(r, 250));
+    expect(await stack.engine.listAlertsSince(0)).toHaveLength(1);
+
+    await stack.engine.untrackWallet(wallet.id);
+
+    expect(await stack.engine.listAlertsSince(0)).toHaveLength(0);
+  }, 30_000);
+});

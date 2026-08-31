@@ -1,6 +1,6 @@
 import express, { type Express, type NextFunction, type Request, type Response } from 'express';
 import { timingSafeEqual } from 'node:crypto';
-import { eq, gt } from 'drizzle-orm';
+import { desc, eq, gt } from 'drizzle-orm';
 import type { Db } from '@cryptonix/db';
 import { wallets, walletTrades, pnlDaily, discordGuilds, alerts } from '@cryptonix/db';
 import type { HeliusEnhancedTransaction } from '@cryptonix/core';
@@ -282,6 +282,21 @@ export function createServer(
         .orderBy(alerts.id)
         .limit(MAX_ALERT_REPLAY);
       res.json(rows);
+    })
+  );
+
+  /**
+   * The newest alert id, or 0 when there are none.
+   *
+   * A client starting fresh needs this to resume from "now" rather than
+   * replaying history. It cannot be derived from GET /alerts: that returns an
+   * ascending, capped page, so asking with since=0 yields the OLDEST rows.
+   */
+  app.get(
+    '/alerts/head',
+    asyncRoute(async (_req, res) => {
+      const [newest] = await db.select().from(alerts).orderBy(desc(alerts.id)).limit(1);
+      res.json({ id: newest?.id ?? 0 });
     })
   );
 
