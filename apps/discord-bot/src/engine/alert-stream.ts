@@ -2,6 +2,8 @@ import WebSocket from 'ws';
 
 /** Exactly what apps/engine/src/api/alert-bus.ts publishes over /ws. */
 export interface AlertEvent {
+  /** alerts-table row id; monotonic, and how catch-up knows where to resume. */
+  id: number;
   type: string;
   refId: number;
   payload: unknown;
@@ -44,6 +46,7 @@ function isAlertEvent(value: unknown): value is AlertEvent {
   return (
     typeof value === 'object' &&
     value !== null &&
+    typeof (value as AlertEvent).id === 'number' &&
     typeof (value as AlertEvent).type === 'string' &&
     typeof (value as AlertEvent).refId === 'number'
   );
@@ -56,6 +59,7 @@ export class AlertStream {
   private readonly maxDelayMs: number;
 
   private handlers: ((alert: AlertEvent) => void)[] = [];
+  private openHandlers: (() => void)[] = [];
   private socket: AlertSocket | null = null;
   private delayMs: number;
   private stopped = false;
@@ -81,6 +85,16 @@ export class AlertStream {
 
   onAlert(handler: (alert: AlertEvent) => void) {
     this.handlers.push(handler);
+  }
+
+  /**
+   * Called on every successful connection, including reconnects.
+   *
+   * This is where a consumer catches up on what was published while it was
+   * away: the socket itself only ever delivers what happens while it is open.
+   */
+  onOpen(handler: () => void) {
+    this.openHandlers.push(handler);
   }
 
   start() {
@@ -160,9 +174,13 @@ export class AlertStream {
       if (!isCurrent()) return;
       this.delayMs = this.initialDelayMs;
       this.startHeartbeat(socket);
+      for (const handler of this.openHandlers) handler();
     });
 
     socket.on('pong', () => {
+      // Same currency guard as every other handler: a stale socket's pong must
+      // not clear the CURRENT socket's timeout and suppress half-open detection.
+      if (!isCurrent()) return;
       // Still alive; cancel the pending "no answer" timeout.
       if (this.pongTimer) clearTimeout(this.pongTimer);
       this.pongTimer = null;

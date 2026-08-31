@@ -103,7 +103,7 @@ describe('attachWebSocket', () => {
     spy.on('error', () => {});
 
     await new Promise((resolve) => setTimeout(resolve, 150));
-    alertBus.publish({ type: 'wallet_buy', refId: 1, payload: { secret: 'alpha' } });
+    alertBus.publish({ id: 1, type: 'wallet_buy', refId: 1, payload: { secret: 'alpha' } });
     await new Promise((resolve) => setTimeout(resolve, 150));
 
     expect(received).toHaveLength(0);

@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { fanOutAlert } from './fan-out';
 
 const walletAlert = {
+  id: 1,
   type: 'wallet_buy',
   refId: 1,
   payload: {
@@ -45,7 +46,7 @@ describe('fanOutAlert', () => {
   it('ignores alert types this version does not render', async () => {
     const send = vi.fn();
 
-    await fanOutAlert({ type: 'tweet', refId: 2, payload: {} }, cacheOf(['g1', 'c1']), send);
+    await fanOutAlert({ id: 2, type: 'tweet', refId: 2, payload: {} }, cacheOf(['g1', 'c1']), send);
 
     expect(send).not.toHaveBeenCalled();
   });
@@ -53,7 +54,7 @@ describe('fanOutAlert', () => {
   it('ignores a wallet alert with an unexpected payload', async () => {
     const send = vi.fn();
 
-    await fanOutAlert({ type: 'wallet_buy', refId: 3, payload: { nope: true } }, cacheOf(['g1', 'c1']), send);
+    await fanOutAlert({ id: 3, type: 'wallet_buy', refId: 3, payload: { nope: true } }, cacheOf(['g1', 'c1']), send);
 
     expect(send).not.toHaveBeenCalled();
   });

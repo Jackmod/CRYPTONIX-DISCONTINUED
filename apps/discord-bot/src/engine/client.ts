@@ -10,6 +10,14 @@ export interface Wallet {
   addedAt: string;
 }
 
+export interface AlertRecord {
+  id: number;
+  type: string;
+  refId: number;
+  payload: unknown;
+  ts: string;
+}
+
 export interface GuildConfig {
   guildId: string;
   alertChannelId: string;
@@ -85,6 +93,18 @@ export class EngineClient {
   async getPnl(walletId: number): Promise<DailyPnlRow[]> {
     const res = await this.request(`/wallets/${walletId}/pnl`);
     return res.json() as Promise<DailyPnlRow[]>;
+  }
+
+  /**
+   * Alerts published after `since`, oldest first.
+   *
+   * The WebSocket only reaches clients connected at the moment of publication,
+   * so a trade landing during a restart or a reconnect backoff was recorded
+   * and then never delivered. This is the catch-up path.
+   */
+  async listAlertsSince(since: number): Promise<AlertRecord[]> {
+    const res = await this.request(`/alerts?since=${encodeURIComponent(String(since))}`);
+    return res.json() as Promise<AlertRecord[]>;
   }
 
   async listGuildConfigs(): Promise<GuildConfig[]> {

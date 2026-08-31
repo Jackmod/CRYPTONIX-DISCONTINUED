@@ -68,40 +68,108 @@ client.on(Events.GuildDelete, (guild) => {
 
 const stream = new AlertStream({ url: env.engineWsUrl, apiKey: env.engineApiKey });
 
+/**
+ * Highest alert id already handled.
+ *
+ * The socket only delivers what is published while it is connected, so a trade
+ * landing during a restart or inside the reconnect backoff was recorded by the
+ * engine and never posted. Tracking this lets each (re)connection ask for what
+ * it missed. It starts at the engine's current maximum so a first run does not
+ * replay the whole history into a channel.
+ */
+let lastAlertId = 0;
+
+async function deliver(alert: Parameters<typeof fanOutAlert>[0]) {
+  lastAlertId = Math.max(lastAlertId, alert.id);
+  await fanOutAlert(alert, guildConfigs, async (channelId, message) => {
+    const channel = await client.channels.fetch(channelId);
+    if (!channel?.isTextBased() || !('send' in channel)) {
+      throw new Error(`channel ${channelId} is not a text channel the bot can post to`);
+    }
+    await channel.send(message as Parameters<typeof channel.send>[0]);
+  });
+}
+
+/** Posts anything published while this bot was not listening. */
+async function catchUpOnMissedAlerts() {
+  const missed = await engine.listAlertsSince(lastAlertId);
+  if (missed.length === 0) return;
+
+  console.log(`replaying ${missed.length} alert(s) missed while disconnected`);
+  for (const alert of missed) {
+    await deliver(alert).catch((err) => console.error(`failed to replay alert ${alert.id}`, err));
+  }
+}
+
+/**
+ * Drops routing rows for servers the bot is no longer in.
+ *
+ * GuildDelete handles a kick that happens while we are running, but a kick
+ * during an engine outage — or while the bot is offline entirely — leaves a
+ * row nothing ever removes. It is reloaded on the next start and then costs a
+ * failed channels.fetch on every alert, forever.
+ */
+async function reconcileGuildConfigs() {
+  const configs = await engine.listGuildConfigs();
+  const stale = configs.filter((config) => !client.guilds.cache.has(config.guildId));
+
+  for (const config of stale) {
+    console.log(`removing routing for guild ${config.guildId}: the bot is no longer a member`);
+    guildConfigs.remove(config.guildId);
+    await engine
+      .deleteGuildConfig(config.guildId)
+      .catch((err) => console.error(`could not remove guild ${config.guildId} config`, err));
+  }
+}
+
 client.once(Events.ClientReady, async (ready) => {
   console.log(`discord bot ready as ${ready.user.tag}`);
 
   // Not awaited: if the engine is down right now this retries in the
   // background rather than blocking login, so /setup still works and the
   // routing table fills in as soon as the engine is reachable.
-  void guildConfigs.loadUntilSuccessful().then(() => {
+  void guildConfigs.loadUntilSuccessful().then(async () => {
     console.log(`loaded alert routing for ${guildConfigs.entries().length} server(s)`);
+    await reconcileGuildConfigs().catch((err) => console.error('guild reconciliation failed', err));
+
+    // Start from the current head so a first run does not replay history.
+    const existing = await engine.listAlertsSince(0).catch(() => []);
+    lastAlertId = existing.reduce((max, alert) => Math.max(max, alert.id), lastAlertId);
   });
 
   stream.onAlert((alert) => {
     // fanOutAlert guards each guild's send individually, but building the
     // message happens before that loop. An unhandled rejection here would
     // take the process down, so the whole call gets a boundary.
-    fanOutAlert(alert, guildConfigs, async (channelId, message) => {
-      const channel = await client.channels.fetch(channelId);
-      if (!channel?.isTextBased() || !('send' in channel)) {
-        throw new Error(`channel ${channelId} is not a text channel the bot can post to`);
-      }
-      await channel.send(message as Parameters<typeof channel.send>[0]);
-    }).catch((err) => {
-      console.error(`failed to fan out alert ${alert.refId}`, err);
+    deliver(alert).catch((err) => {
+      console.error(`failed to fan out alert ${alert.id}`, err);
     });
+  });
+
+  // Every (re)connection asks for what it missed while it was away.
+  stream.onOpen(() => {
+    void catchUpOnMissedAlerts().catch((err) => console.error('alert catch-up failed', err));
   });
 
   stream.start();
   console.log(`subscribed to engine alerts at ${env.engineWsUrl}`);
 });
 
+let shuttingDown = false;
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
   process.on(signal, () => {
+    // A second signal should still kill us rather than queue another shutdown.
+    if (shuttingDown) process.exit(1);
+    shuttingDown = true;
+
     stream.stop();
-    client.destroy();
-    process.exit(0);
+    // destroy() is async: exiting without awaiting it abandoned in-flight
+    // editReply calls and skipped the clean gateway close, so Discord saw the
+    // bot time out instead of disconnect.
+    void client
+      .destroy()
+      .catch((err) => console.error('error closing the Discord client', err))
+      .finally(() => process.exit(0));
   });
 }
 

@@ -188,3 +188,64 @@ describe('end-to-end: wallet list is shared, not synced', () => {
     expect(stack.helius.deleteWalletWebhook).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('end-to-end: alerts missed while disconnected', () => {
+  it('replays a trade that landed while the bot was not listening', async () => {
+    // The socket only delivers what is published while it is open. A trade
+    // landing during a restart or inside the reconnect backoff was recorded by
+    // the engine and then never posted to Discord.
+    stack = await startStack();
+    await stack.engine.setGuildConfig('111111111111111111', '900000000000000011');
+    await stack.guildConfigs.load();
+    await stack.engine.trackWallet(ADDRESSES[0], 'Whale', false);
+
+    // Nothing is listening yet: this alert is published to zero sockets.
+    await deliver(stack.baseUrl, [buyTx(ADDRESSES[0], 'missed-sig', 'MintM', 1, 100, 1_787_900_000)]);
+    await new Promise((r) => setTimeout(r, 200));
+    expect(stack.posted).toHaveLength(0);
+
+    // What a reconnecting bot does: ask for everything after what it last saw.
+    const missed = await stack.engine.listAlertsSince(0);
+    expect(missed).toHaveLength(1);
+    expect(missed[0].id).toBeGreaterThan(0);
+    expect(missed[0].type).toBe('wallet_buy');
+  });
+
+  it('does not re-deliver alerts a client has already seen', async () => {
+    stack = await startStack();
+    await stack.engine.trackWallet(ADDRESSES[0], 'Whale', false);
+
+    await deliver(stack.baseUrl, [buyTx(ADDRESSES[0], 'seen-1', 'MintS', 1, 10, 1_787_910_000)]);
+    await new Promise((r) => setTimeout(r, 150));
+
+    const first = await stack.engine.listAlertsSince(0);
+    expect(first).toHaveLength(1);
+
+    // Resuming from the highest id already handled returns nothing new.
+    expect(await stack.engine.listAlertsSince(first[0].id)).toHaveLength(0);
+
+    await deliver(stack.baseUrl, [buyTx(ADDRESSES[0], 'seen-2', 'MintS', 1, 10, 1_787_920_000)]);
+    await new Promise((r) => setTimeout(r, 150));
+
+    const second = await stack.engine.listAlertsSince(first[0].id);
+    expect(second).toHaveLength(1);
+    expect(second[0].id).toBeGreaterThan(first[0].id);
+  });
+
+  it('carries the alert row id over the live socket too', async () => {
+    // Catch-up resumes from this id, so it has to be present on the live path
+    // as well as in the REST replay.
+    stack = await startStack();
+    stack.startBotAlertPipeline();
+    await stack.engine.setGuildConfig('111111111111111111', '900000000000000011');
+    await stack.guildConfigs.load();
+    await stack.engine.trackWallet(ADDRESSES[0], 'Whale', false);
+    await new Promise((r) => setTimeout(r, 200));
+
+    await deliver(stack.baseUrl, [buyTx(ADDRESSES[0], 'live-id-sig', 'MintL', 1, 10, 1_787_930_000)]);
+    await waitFor(() => stack.posted.length === 1);
+
+    const viaRest = await stack.engine.listAlertsSince(0);
+    expect(viaRest[0].id).toBeGreaterThan(0);
+  });
+});

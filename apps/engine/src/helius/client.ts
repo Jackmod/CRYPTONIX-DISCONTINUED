@@ -110,6 +110,12 @@ export class HeliusClient {
       const requested = Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter * 1000 : 2 ** attempt * 250;
       const backoffMs = Math.min(requested, MAX_BACKOFF_MS);
       console.warn(`helius ${res.status}; retrying in ${backoffMs}ms (attempt ${attempt + 1}/${MAX_RETRIES})`);
+
+      // Release the connection. An unread body keeps its undici socket
+      // checked out until GC — precisely under the 429 storms this loop exists
+      // to survive, which is when connections are scarcest.
+      await res.body?.cancel().catch(() => {});
+
       await this.sleep(backoffMs);
     }
   }

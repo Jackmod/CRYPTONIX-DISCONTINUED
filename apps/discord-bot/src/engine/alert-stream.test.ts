@@ -53,7 +53,7 @@ describe('AlertStream', () => {
     stream.onAlert((alert) => received.push(alert));
     stream.start();
 
-    sockets[0].emit('message', JSON.stringify({ type: 'wallet_buy', refId: 3, payload: { mint: 'Mint1' } }));
+    sockets[0].emit('message', JSON.stringify({ id: 7, type: 'wallet_buy', refId: 3, payload: { mint: 'Mint1' } }));
 
     expect(received).toHaveLength(1);
     expect(received[0].type).toBe('wallet_buy');
@@ -286,7 +286,7 @@ describe('AlertStream: stale sockets', () => {
     stream.stop();
     stream.start();
 
-    first.emit('message', JSON.stringify({ type: 'wallet_buy', refId: 1, payload: {} }));
+    first.emit('message', JSON.stringify({ id: 1, type: 'wallet_buy', refId: 1, payload: {} }));
 
     expect(received).toHaveLength(0);
   });

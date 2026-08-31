@@ -625,4 +625,63 @@ describe('engine API', () => {
     expect(res.status).toBe(401); // not 400: never parsed
     expect(res.body.error).toBe('invalid webhook authorization');
   });
+
+  it('GET /alerts returns only alerts after `since`, oldest first', async () => {
+    // The socket only reaches clients connected at publication time, so a
+    // trade landing during a restart or reconnect backoff was recorded and
+    // never delivered. This is how a reconnecting bot catches up.
+    const app = buildApp();
+    await api(app).post('/wallets').send({ address: VALID_ADDRESS, label: 'W' });
+
+    for (const sig of ['a', 'b', 'c']) {
+      await request(app)
+        .post('/webhooks/helius')
+        .set('Authorization', WEBHOOK_SECRET)
+        .send([
+          {
+            signature: `alert-${sig}`,
+            timestamp: 1_787_000_000,
+            type: 'SWAP',
+            tokenTransfers: [{ fromUserAccount: 'Pool', toUserAccount: VALID_ADDRESS, mint: 'M', tokenAmount: 1 }],
+            nativeTransfers: [{ fromUserAccount: VALID_ADDRESS, toUserAccount: 'Pool', amount: 1_000_000_000 }],
+          },
+        ]);
+    }
+
+    const all = await api(app).get('/alerts?since=0');
+    expect(all.body).toHaveLength(3);
+    expect(all.body[0].id).toBeLessThan(all.body[2].id);
+
+    const after = await api(app).get(`/alerts?since=${all.body[0].id}`);
+    expect(after.body).toHaveLength(2);
+    expect(after.body.every((a: { id: number }) => a.id > all.body[0].id)).toBe(true);
+  });
+
+  it('GET /alerts rejects a nonsense since value', async () => {
+    const app = buildApp();
+    for (const since of ['abc', '-1', '1.5']) {
+      const res = await api(app).get(`/alerts?since=${since}`);
+      expect(res.status, `since=${since} must be rejected`).toBe(400);
+    }
+  });
+
+  it('publishes the alert row id so a client can resume from it', async () => {
+    const app = buildApp();
+    await api(app).post('/wallets').send({ address: VALID_ADDRESS, label: 'W' });
+    await request(app)
+      .post('/webhooks/helius')
+      .set('Authorization', WEBHOOK_SECRET)
+      .send([
+        {
+          signature: 'id-check',
+          timestamp: 1_787_000_000,
+          type: 'SWAP',
+          tokenTransfers: [{ fromUserAccount: 'Pool', toUserAccount: VALID_ADDRESS, mint: 'M', tokenAmount: 1 }],
+          nativeTransfers: [{ fromUserAccount: VALID_ADDRESS, toUserAccount: 'Pool', amount: 1_000_000_000 }],
+        },
+      ]);
+
+    const alertsRes = await api(app).get('/alerts?since=0');
+    expect(alertsRes.body[0].id).toBeGreaterThan(0);
+  });
 });

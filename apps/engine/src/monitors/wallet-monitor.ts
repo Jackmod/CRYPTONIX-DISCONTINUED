@@ -215,7 +215,7 @@ export class WalletMonitor {
       .values({ type: parsed.side === 'buy' ? 'wallet_buy' : 'wallet_sell', refId: trade.id, payload })
       .returning();
 
-    this.alertBus.publish({ type: alert.type, refId: alert.refId, payload: alert.payload });
+    this.alertBus.publish({ id: alert.id, type: alert.type, refId: alert.refId, payload: alert.payload });
     return true;
   }
 }

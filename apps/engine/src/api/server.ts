@@ -1,8 +1,8 @@
 import express, { type Express, type NextFunction, type Request, type Response } from 'express';
 import { timingSafeEqual } from 'node:crypto';
-import { eq } from 'drizzle-orm';
+import { eq, gt } from 'drizzle-orm';
 import type { Db } from '@cryptonix/db';
-import { wallets, walletTrades, pnlDaily, discordGuilds } from '@cryptonix/db';
+import { wallets, walletTrades, pnlDaily, discordGuilds, alerts } from '@cryptonix/db';
 import type { HeliusEnhancedTransaction } from '@cryptonix/core';
 import type { WalletMonitor } from '../monitors/wallet-monitor.js';
 import type { PnlTracker } from '../monitors/pnl-tracker.js';
@@ -13,6 +13,8 @@ import { isValidBearer } from './auth.js';
 import { HeliusError } from '../helius/client.js';
 
 const MAX_LABEL_LENGTH = 100;
+/** Cap on a single catch-up page, so a long outage cannot flood a channel. */
+const MAX_ALERT_REPLAY = 50;
 
 /**
  * Express 4 does not forward a rejected promise from an async handler to its
@@ -252,6 +254,34 @@ export function createServer(
         return;
       }
       res.status(204).end();
+    })
+  );
+
+  /**
+   * Alerts after `since`, oldest first.
+   *
+   * The WebSocket only reaches clients connected at the moment an alert is
+   * published. A trade landing while the bot is restarting or inside its
+   * reconnect backoff was written to the alerts table and then never
+   * delivered. This is how a reconnecting client catches up on what it missed.
+   */
+  app.get(
+    '/alerts',
+    asyncRoute(async (req, res) => {
+      const sinceRaw = req.query.since;
+      const since = Number(typeof sinceRaw === 'string' ? sinceRaw : 0);
+      if (!Number.isInteger(since) || since < 0) {
+        res.status(400).json({ error: 'since must be a non-negative integer' });
+        return;
+      }
+
+      const rows = await db
+        .select()
+        .from(alerts)
+        .where(gt(alerts.id, since))
+        .orderBy(alerts.id)
+        .limit(MAX_ALERT_REPLAY);
+      res.json(rows);
     })
   );
 
