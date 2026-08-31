@@ -12,7 +12,7 @@ const WEBHOOK_SECRET = 'test-webhook-secret';
 
 describe('engine API', () => {
   beforeEach(async () => {
-    await db.execute('TRUNCATE alerts, pnl_daily, wallet_trades, wallets RESTART IDENTITY CASCADE');
+    await db.execute('TRUNCATE alerts, pnl_daily, wallet_trades, wallets, discord_guilds RESTART IDENTITY CASCADE');
   });
 
   function buildApp() {
@@ -279,5 +279,51 @@ describe('engine API', () => {
     const app = buildApp();
     const res = await request(app).delete('/wallets/9999');
     expect(res.status).toBe(404);
+  });
+
+  it('PUT /discord/guilds/:id stores a guild config and GET lists it', async () => {
+    const app = buildApp();
+
+    const putRes = await request(app)
+      .put('/discord/guilds/guild1')
+      .send({ alertChannelId: 'channel1', setupBy: 'user1' });
+    expect(putRes.status).toBe(200);
+    expect(putRes.body.alertChannelId).toBe('channel1');
+
+    const listRes = await request(app).get('/discord/guilds');
+    expect(listRes.body).toHaveLength(1);
+    expect(listRes.body[0].guildId).toBe('guild1');
+  });
+
+  it('PUT /discord/guilds/:id twice moves the channel instead of erroring', async () => {
+    // Re-running /setup is normal, not an error case.
+    const app = buildApp();
+
+    await request(app).put('/discord/guilds/guild1').send({ alertChannelId: 'channel1' });
+    const second = await request(app).put('/discord/guilds/guild1').send({ alertChannelId: 'channel2' });
+
+    expect(second.status).toBe(200);
+    const listRes = await request(app).get('/discord/guilds');
+    expect(listRes.body).toHaveLength(1);
+    expect(listRes.body[0].alertChannelId).toBe('channel2');
+  });
+
+  it('PUT /discord/guilds/:id without a channel returns 400', async () => {
+    const app = buildApp();
+    const res = await request(app).put('/discord/guilds/guild1').send({});
+    expect(res.status).toBe(400);
+  });
+
+  it('DELETE /discord/guilds/:id removes the config and is idempotent', async () => {
+    const app = buildApp();
+    await request(app).put('/discord/guilds/guild1').send({ alertChannelId: 'channel1' });
+
+    expect((await request(app).delete('/discord/guilds/guild1')).status).toBe(204);
+    // Deleting again must still succeed: the bot calls this when it is removed
+    // from a server, and Discord can deliver that event more than once.
+    expect((await request(app).delete('/discord/guilds/guild1')).status).toBe(204);
+
+    const listRes = await request(app).get('/discord/guilds');
+    expect(listRes.body).toHaveLength(0);
   });
 });

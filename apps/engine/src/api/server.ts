@@ -2,7 +2,7 @@ import express, { type Express, type Request, type Response } from 'express';
 import { timingSafeEqual } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import type { Db } from '@cryptonix/db';
-import { wallets, walletTrades, pnlDaily } from '@cryptonix/db';
+import { wallets, walletTrades, pnlDaily, discordGuilds } from '@cryptonix/db';
 import type { HeliusEnhancedTransaction } from '@cryptonix/core';
 import type { WalletMonitor } from '../monitors/wallet-monitor.js';
 import type { PnlTracker } from '../monitors/pnl-tracker.js';
@@ -118,6 +118,46 @@ export function createServer(
         res.status(404).json({ error: 'wallet not found' });
         return;
       }
+      res.status(204).end();
+    })
+  );
+
+  app.get(
+    '/discord/guilds',
+    asyncRoute(async (_req, res) => {
+      res.json(await db.select().from(discordGuilds));
+    })
+  );
+
+  app.put(
+    '/discord/guilds/:guildId',
+    asyncRoute(async (req, res) => {
+      const { alertChannelId, setupBy } = (req.body ?? {}) as { alertChannelId?: string; setupBy?: string };
+      if (!alertChannelId) {
+        res.status(400).json({ error: 'alertChannelId is required' });
+        return;
+      }
+
+      // Upsert: /setup is idempotent, and re-running it to move channels is
+      // expected use, not a conflict.
+      const [row] = await db
+        .insert(discordGuilds)
+        .values({ guildId: req.params.guildId, alertChannelId, setupBy })
+        .onConflictDoUpdate({
+          target: discordGuilds.guildId,
+          set: { alertChannelId, setupBy, setupAt: new Date() },
+        })
+        .returning();
+      res.json(row);
+    })
+  );
+
+  app.delete(
+    '/discord/guilds/:guildId',
+    asyncRoute(async (req, res) => {
+      // Idempotent on purpose: the bot calls this when kicked from a server,
+      // and Discord may deliver that event more than once.
+      await db.delete(discordGuilds).where(eq(discordGuilds.guildId, req.params.guildId));
       res.status(204).end();
     })
   );
