@@ -268,8 +268,15 @@ export function createServer(
   app.get(
     '/alerts',
     asyncRoute(async (req, res) => {
-      const sinceRaw = req.query.since;
-      const since = Number(typeof sinceRaw === 'string' ? sinceRaw : 0);
+      // A repeated query param (?since=1&since=2) arrives as an array. Coercing
+      // that to 0 silently returned the 50 OLDEST alerts instead of rejecting
+      // it — a caller resuming from there would replay history.
+      const sinceRaw = req.query.since ?? '0';
+      if (typeof sinceRaw !== 'string') {
+        res.status(400).json({ error: 'since must be a single non-negative integer' });
+        return;
+      }
+      const since = Number(sinceRaw);
       if (!Number.isInteger(since) || since < 0) {
         res.status(400).json({ error: 'since must be a non-negative integer' });
         return;

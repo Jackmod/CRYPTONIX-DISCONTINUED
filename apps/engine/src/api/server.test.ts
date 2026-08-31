@@ -740,4 +740,15 @@ describe('engine API', () => {
 
     expect((await api(app).get('/alerts?since=0')).body).toHaveLength(0);
   });
+
+  it('GET /alerts rejects a repeated since parameter instead of treating it as 0', async () => {
+    // A repeated query param arrives as an array; coercing it to 0 silently
+    // returned the OLDEST alerts, and a client resuming from there replays
+    // history into live channels.
+    const app = buildApp();
+
+    const res = await api(app).get('/alerts?since=1&since=2');
+
+    expect(res.status).toBe(400);
+  });
 });

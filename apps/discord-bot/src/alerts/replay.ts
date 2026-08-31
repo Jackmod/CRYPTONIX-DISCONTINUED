@@ -127,8 +127,15 @@ export class AlertReplay {
     this.backlogClear = false;
     let posted = 0;
     try {
+      // The walk position and the durable cursor are deliberately separate.
+      // Walking straight off the cursor meant one deterministically-failing
+      // alert pinned it, the progress check tripped, and the walk stopped --
+      // so everything after that alert was never fetched at all. The walk
+      // keeps moving; the cursor is what stays behind so failures can be
+      // fetched again.
+      let fetchFrom = this.cursor;
       for (;;) {
-        const page = await this.options.listAlertsSince(this.cursor);
+        const page = await this.options.listAlertsSince(fetchFrom);
         if (page.length === 0) break;
 
         for (const alert of page) {
@@ -146,15 +153,12 @@ export class AlertReplay {
           }
         }
 
-        const highest = page.reduce((max, alert) => Math.max(max, alert.id), this.cursor);
-        // Never step over an id that is still in flight or that failed: those
-        // have to remain fetchable, and only ids above the cursor ever are.
-        const blocked = this.lowestUnresolvedId();
-        const next = blocked === null ? highest : Math.min(highest, blocked - 1);
-
+        const highest = page.reduce((max, alert) => Math.max(max, alert.id), fetchFrom);
         // No forward progress would spin forever; stop instead.
-        if (next <= this.cursor) break;
-        this.cursor = next;
+        if (highest <= fetchFrom) break;
+        fetchFrom = highest;
+
+        this.advanceCursorTo(highest);
 
         // A short page means the backlog is exhausted.
         if (page.length < this.options.pageSize) break;
@@ -218,8 +222,22 @@ export class AlertReplay {
     // Only when nothing may still lie behind the cursor. After an aborted
     // walk there are unfetched ids below this one, and moving past them would
     // lose them.
-    if (advanceCursor && this.backlogClear) this.cursor = Math.max(this.cursor, alert.id);
+    if (advanceCursor && this.backlogClear) this.advanceCursorTo(alert.id);
     return true;
+  }
+
+  /**
+   * Moves the cursor toward `target`, never past anything unresolved.
+   *
+   * Both the walk and the live path go through here. The live path used to
+   * assign the cursor directly, which stepped straight over an alert whose
+   * delivery had failed — and only ids ABOVE the cursor are ever returned, so
+   * that alert could never be fetched again.
+   */
+  private advanceCursorTo(target: number) {
+    const blocked = this.lowestUnresolvedId();
+    const bound = blocked === null ? target : Math.min(target, blocked - 1);
+    if (bound > this.cursor) this.cursor = bound;
   }
 
   /** Lowest id that must stay fetchable, or null when there is none. */

@@ -456,3 +456,84 @@ describe('AlertReplay: concurrency', () => {
     expect(posted).toEqual([1, 2]);
   });
 });
+
+describe('AlertReplay: a failing alert must not lose or wedge anything', () => {
+  /** `count` alerts, with `failing` always throwing on delivery. */
+  function buildWithFailure(count: number, failing: number) {
+    const stored = Array.from({ length: count }, (_, i) => alert(i + 1));
+    const posted: number[] = [];
+    const replay = new AlertReplay({
+      listAlertsSince: vi.fn(async (since: number) => stored.filter((a) => a.id > since).slice(0, PAGE)),
+      getAlertHead: vi.fn(async () => 0),
+      deliver: vi.fn(async (a: AlertEvent) => {
+        if (a.id === failing) throw new Error('always fails');
+        posted.push(a.id);
+      }),
+      pageSize: PAGE,
+    });
+    return { replay, posted, stored };
+  }
+
+  it('still delivers the whole backlog past a permanently failing alert', async () => {
+    // The bug this guards: the failing alert pinned the cursor, the progress
+    // check tripped, and the walk stopped -- so everything after it was never
+    // fetched at all, on this or any later reconnect.
+    const { replay, posted } = buildWithFailure(20, 3);
+    await replay.start();
+
+    await replay.catchUp();
+
+    expect(posted).toEqual([1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]);
+    // ...while the cursor stays below the failure so it can be retried.
+    expect(replay.resumeFrom).toBe(2);
+  });
+
+  it('does not let a later live alert step over a failed one', async () => {
+    // Confirmed regression: failed 101 left the cursor at 100, then a
+    // successful live 102 assigned the cursor 102 and 101 became unreachable.
+    const posted: number[] = [];
+    const replay = new AlertReplay({
+      listAlertsSince: vi.fn(async () => []),
+      getAlertHead: vi.fn(async () => 100),
+      deliver: vi.fn(async (a: AlertEvent) => {
+        if (a.id === 101) throw new Error('discord is down');
+        posted.push(a.id);
+      }),
+      pageSize: PAGE,
+    });
+    await replay.start();
+
+    await expect(replay.handleLive(alert(101))).rejects.toThrow();
+    await replay.handleLive(alert(102));
+
+    expect(posted).toEqual([102]);
+    // 100, not 102: alert 101 has to stay above the cursor to be fetchable.
+    expect(replay.resumeFrom).toBe(100);
+  });
+
+  it('recovers the failed alert once delivery works again', async () => {
+    const stored = Array.from({ length: 12 }, (_, i) => alert(i + 1));
+    const posted: number[] = [];
+    let broken = true;
+    const replay = new AlertReplay({
+      listAlertsSince: vi.fn(async (since: number) => stored.filter((a) => a.id > since).slice(0, PAGE)),
+      getAlertHead: vi.fn(async () => 0),
+      deliver: vi.fn(async (a: AlertEvent) => {
+        if (a.id === 3 && broken) throw new Error('transient');
+        posted.push(a.id);
+      }),
+      pageSize: PAGE,
+    });
+    await replay.start();
+
+    await replay.catchUp();
+    expect(posted).not.toContain(3);
+    expect(replay.resumeFrom).toBe(2);
+
+    broken = false;
+    await replay.catchUp();
+
+    expect(posted).toContain(3);
+    expect(replay.resumeFrom).toBe(12); // nothing outstanding, cursor caught up
+  });
+});
