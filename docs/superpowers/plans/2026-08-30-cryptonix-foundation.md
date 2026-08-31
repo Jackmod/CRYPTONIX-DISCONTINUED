@@ -511,6 +511,28 @@ describe('applyFifo', () => {
     applyFifo(lots, 500, 1);
     expect(lots).toEqual([{ solCost: 2, tokenAmount: 1000 }]);
   });
+
+  it('excludes proceeds for tokens with no tracked cost basis', () => {
+    // Sold 200 tokens for 4 SOL, but only 100 of them came from a tracked buy.
+    // Counting all 4 SOL against the 1 SOL basis would report +3 phantom profit;
+    // only the matched half of the sale (2 SOL) may be credited.
+    const lots: Lot[] = [{ solCost: 1, tokenAmount: 100 }];
+    const { remainingLots, realizedPnlSol, unmatchedTokenAmount } = applyFifo(lots, 200, 4);
+    expect(remainingLots).toEqual([]);
+    expect(realizedPnlSol).toBeCloseTo(1); // 2 SOL matched proceeds - 1 SOL cost
+    expect(unmatchedTokenAmount).toBe(100);
+  });
+
+  it('reports zero PnL, not phantom profit, when no lots back the sale at all', () => {
+    const { realizedPnlSol, unmatchedTokenAmount } = applyFifo([], 50, 2);
+    expect(realizedPnlSol).toBe(0);
+    expect(unmatchedTokenAmount).toBe(50);
+  });
+
+  it('reports no unmatched tokens when lots fully cover the sale', () => {
+    const lots: Lot[] = [{ solCost: 2, tokenAmount: 1000 }];
+    expect(applyFifo(lots, 1000, 3).unmatchedTokenAmount).toBe(0);
+  });
 });
 ```
 
@@ -533,6 +555,13 @@ export interface Lot {
 export interface FifoOutcome {
   remainingLots: Lot[];
   realizedPnlSol: number;
+  /**
+   * Tokens sold that no tracked buy lot covered — the position predates our
+   * backfill window, or the tokens arrived by airdrop/transfer rather than a
+   * swap. Their proceeds are deliberately excluded from `realizedPnlSol`,
+   * because we have no cost basis for them.
+   */
+  unmatchedTokenAmount: number;
 }
 
 export function applyFifo(lots: Lot[], sellTokenAmount: number, sellSolReceived: number): FifoOutcome {
@@ -557,7 +586,19 @@ export function applyFifo(lots: Lot[], sellTokenAmount: number, sellSolReceived:
     }
   }
 
-  return { remainingLots: remaining, realizedPnlSol: sellSolReceived - costBasisConsumed };
+  // Count only the proceeds attributable to tokens we actually have a cost
+  // basis for. Charging a full sale against a partial basis would report
+  // phantom profit on any position that predates our data — which is every
+  // position held before a wallet was first backfilled.
+  const matchedTokenAmount = sellTokenAmount - toSell;
+  const matchedProceeds =
+    sellTokenAmount === 0 ? 0 : sellSolReceived * (matchedTokenAmount / sellTokenAmount);
+
+  return {
+    remainingLots: remaining,
+    realizedPnlSol: matchedProceeds - costBasisConsumed,
+    unmatchedTokenAmount: toSell,
+  };
 }
 ```
 
@@ -566,7 +607,7 @@ export function applyFifo(lots: Lot[], sellTokenAmount: number, sellSolReceived:
 ```bash
 pnpm --filter @cryptonix/core test
 ```
-Expected: PASS, all 4 tests.
+Expected: PASS, all 7 tests (4 original + 3 unmatched-basis cases).
 
 - [ ] **Step 5: Create the package's barrel export**
 
@@ -1409,9 +1450,21 @@ export class PnlTracker {
         lots.push({ solCost: trade.solAmount, tokenAmount: trade.tokenAmount });
         lotsByMint.set(trade.mint, lots);
       } else {
-        const { remainingLots, realizedPnlSol } = applyFifo(lots, trade.tokenAmount, trade.solAmount);
+        const { remainingLots, realizedPnlSol, unmatchedTokenAmount } = applyFifo(
+          lots,
+          trade.tokenAmount,
+          trade.solAmount
+        );
         lotsByMint.set(trade.mint, remainingLots);
         dayEntry.realizedPnlSol += realizedPnlSol;
+        if (unmatchedTokenAmount > 0) {
+          // Expected on a first backfill: the wallet already held this token
+          // before our history window. Those proceeds are excluded from PnL
+          // rather than counted as pure profit.
+          console.warn(
+            `pnl: wallet ${walletId} sold ${unmatchedTokenAmount} ${trade.mint} with no tracked cost basis (tx ${trade.signature})`
+          );
+        }
       }
 
       dailyPnl.set(day, dayEntry);
