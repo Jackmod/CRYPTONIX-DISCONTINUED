@@ -115,6 +115,7 @@ dist
 .env
 *.log
 .turbo
+.superpowers
 ```
 
 - [ ] **Step 6: Create `.env.example` and your real `.env`**
@@ -194,6 +195,7 @@ git commit -m "Scaffold pnpm/Turborepo monorepo"
     "test": "vitest run"
   },
   "devDependencies": {
+    "@cryptonix/config": "workspace:*",
     "vitest": "^2.1.0",
     "typescript": "^5.6.0"
   }
@@ -560,8 +562,7 @@ Expected: PASS, all 4 tests.
 `packages/core/src/index.ts`:
 ```ts
 export * from './axiom-links/build-link';
-export * from './wallet-parsing/parse-swap';
-export * from './wallet-parsing/types';
+export * from './wallet-parsing/parse-swap'; // re-exports the ./wallet-parsing/types too
 export * from './pnl/fifo';
 ```
 
@@ -612,6 +613,7 @@ git commit -m "core: add FIFO PnL calculator, barrel export"
     "pg": "^8.13.0"
   },
   "devDependencies": {
+    "@cryptonix/config": "workspace:*",
     "drizzle-kit": "^0.28.0",
     "@types/pg": "^8.11.0",
     "vitest": "^2.1.0",
@@ -802,6 +804,7 @@ git commit -m "db: add Drizzle schema, client, and migrations"
     "ws": "^8.18.0"
   },
   "devDependencies": {
+    "@cryptonix/config": "workspace:*",
     "@types/express": "^5.0.0",
     "@types/ws": "^8.5.0",
     "tsx": "^4.19.0",
@@ -996,7 +999,7 @@ export class AlertBus extends EventEmitter {
 `apps/engine/src/monitors/wallet-monitor.test.ts`:
 ```ts
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { createDb, wallets, walletTrades, alerts } from '@cryptonix/db';
+import { createDb, walletTrades, alerts } from '@cryptonix/db';
 import type { HeliusEnhancedTransaction } from '@cryptonix/core';
 import { WalletMonitor } from './wallet-monitor';
 import { AlertBus } from '../api/alert-bus';
@@ -1106,7 +1109,6 @@ Expected: FAIL — `wallet-monitor.ts` does not exist.
 
 `apps/engine/src/monitors/wallet-monitor.ts`:
 ```ts
-import { eq, and } from 'drizzle-orm';
 import type { Db } from '@cryptonix/db';
 import { wallets, walletTrades, alerts } from '@cryptonix/db';
 import { parseSwap, buildAxiomLink, type HeliusEnhancedTransaction } from '@cryptonix/core';
@@ -1406,7 +1408,7 @@ pnpm --filter @cryptonix/engine add -D supertest @types/supertest
 ```ts
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import request from 'supertest';
-import { createDb, wallets, walletTrades } from '@cryptonix/db';
+import { createDb } from '@cryptonix/db';
 import { createServer } from './server';
 import { WalletMonitor } from '../monitors/wallet-monitor';
 import { PnlTracker } from '../monitors/pnl-tracker';
