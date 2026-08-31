@@ -255,3 +255,39 @@ describe('AlertStream heartbeat', () => {
     vi.useRealTimers();
   });
 });
+
+describe('AlertStream: stale sockets', () => {
+  it('ignores a close from a socket it has already replaced', () => {
+    // A stop()/start() cycle leaves the old socket's handlers registered.
+    // Without a currency check its stale 'close' scheduled a second
+    // connection, after which every alert arrived - and was posted - twice.
+    const { stream, sockets, delays, runPending } = build();
+    stream.start();
+    const first = sockets[0];
+
+    stream.stop();
+    stream.start(); // a fresh socket is now current
+    expect(sockets).toHaveLength(2);
+
+    first.emit('close'); // the old one finally reports closing
+    runPending();
+
+    expect(sockets).toHaveLength(2); // no extra connection was scheduled
+    expect(delays).toEqual([]);
+  });
+
+  it('ignores messages from a socket it has already replaced', () => {
+    const { stream, sockets } = build();
+    const received: any[] = [];
+    stream.onAlert((alert) => received.push(alert));
+    stream.start();
+    const first = sockets[0];
+
+    stream.stop();
+    stream.start();
+
+    first.emit('message', JSON.stringify({ type: 'wallet_buy', refId: 1, payload: {} }));
+
+    expect(received).toHaveLength(0);
+  });
+});

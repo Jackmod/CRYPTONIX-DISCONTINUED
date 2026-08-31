@@ -4,6 +4,7 @@ import { untrackCommand } from './untrack';
 import { pnlCommand } from './pnl';
 import { setupCommand } from './setup';
 import { EngineError } from '../engine/client';
+import { PermissionFlagsBits } from 'discord.js';
 
 function fakeInteraction(options: Record<string, string | boolean | null>) {
   const editReply = vi.fn();
@@ -147,7 +148,12 @@ function fakeGuildInteraction(options: { channel?: string | null; guildId?: stri
   // /setup now verifies it can actually post in the chosen channel before
   // confirming, so the fixture needs a guild whose channel grants that.
   const permissive = { has: () => true };
-  const channel = { id: options.channel ?? 'current-channel', isTextBased: () => true, permissionsFor: () => permissive };
+  const channel = {
+    id: options.channel ?? 'current-channel',
+    isTextBased: () => true,
+    isThread: () => false,
+    permissionsFor: () => permissive,
+  };
   return {
     editReply,
     interaction: {
@@ -295,7 +301,7 @@ describe('DM safety', () => {
 describe('/setup channel checks', () => {
   function guildInteractionWithChannel(permissionsFor: () => { has: (p: unknown) => boolean } | null) {
     const editReply = vi.fn();
-    const channel = { id: 'chosen', isTextBased: () => true, permissionsFor };
+    const channel = { id: 'chosen', isTextBased: () => true, isThread: () => false, permissionsFor };
     return {
       editReply,
       interaction: {
@@ -336,5 +342,48 @@ describe('/setup channel checks', () => {
 
     expect(engine.setGuildConfig).toHaveBeenCalledWith('g1', 'chosen', 'u1');
     expect(guildConfigs.set).toHaveBeenCalledWith('g1', 'chosen');
+  });
+});
+
+describe('/setup in a thread', () => {
+  function threadInteraction(has: (flag: bigint) => boolean) {
+    const editReply = vi.fn();
+    const channel = { id: 'thread-1', isTextBased: () => true, isThread: () => true, permissionsFor: () => ({ has }) };
+    return {
+      editReply,
+      interaction: {
+        guildId: 'g1',
+        channelId: 'thread-1',
+        user: { id: 'u1' },
+        guild: { channels: { fetch: vi.fn().mockResolvedValue(channel) }, members: { me: {} } },
+        options: { getChannel: () => null },
+        deferReply: vi.fn(),
+        editReply,
+      } as any,
+    };
+  }
+
+  it('requires Send Messages in Threads, not Send Messages', async () => {
+    // Posting into a thread needs SendMessagesInThreads. Checking only
+    // SendMessages let /setup confirm success for a thread whose alerts then
+    // failed silently -- the exact misconfiguration this check exists to catch.
+    const engine = { setGuildConfig: vi.fn() } as any;
+    const { interaction, editReply } = threadInteraction(
+      (flag) => flag !== PermissionFlagsBits.SendMessagesInThreads
+    );
+
+    await setupCommand.execute(interaction, { engine, guildConfigs: { set: vi.fn() } as any });
+
+    expect(engine.setGuildConfig).not.toHaveBeenCalled();
+    expect(String(editReply.mock.calls[0][0])).toContain('Send Messages in Threads');
+  });
+
+  it('accepts a thread the bot can post in', async () => {
+    const engine = { setGuildConfig: vi.fn().mockResolvedValue({}) } as any;
+    const { interaction } = threadInteraction(() => true);
+
+    await setupCommand.execute(interaction, { engine, guildConfigs: { set: vi.fn() } as any });
+
+    expect(engine.setGuildConfig).toHaveBeenCalledWith('g1', 'thread-1', 'u1');
   });
 });

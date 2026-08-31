@@ -11,7 +11,14 @@ const engine = new EngineClient(env.engineHttpUrl, env.engineApiKey);
 const guildConfigs = new GuildConfigCache(engine);
 const commandsByName = new Map(commands.map((command) => [command.data.name, command]));
 
-const client = new Client({ intents: [GatewayIntentBits.Guilds] });
+const client = new Client({
+  intents: [GatewayIntentBits.Guilds],
+  // Command replies interpolate user-supplied text (a wallet label, an
+  // address someone typed). Without this, `/pnl wallet:@everyone` would make
+  // the bot emit a mass ping on behalf of an unprivileged member. Nothing this
+  // bot sends ever needs to mention anyone.
+  allowedMentions: { parse: [] },
+});
 
 client.on(Events.InteractionCreate, async (interaction) => {
   if (!interaction.isChatInputCommand()) return;

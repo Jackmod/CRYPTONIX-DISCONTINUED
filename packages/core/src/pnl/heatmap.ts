@@ -36,6 +36,14 @@ function levelFor(pnlSol: number, traded: boolean, best: number, worst: number):
 export function buildHeatmapGrid(rows: DailyPnlRow[], month: string): HeatmapCell[][] {
   const [year, monthIndex] = month.split('-').map(Number);
 
+  // Date.UTC maps years 0-99 to 1900-1999, so '0026-08' would quietly produce
+  // 1926's calendar: a different starting weekday and, in a leap year, a
+  // different February length. Callers validate too; refuse here as well so a
+  // wrong grid can never be rendered from a bad input.
+  if (!Number.isInteger(year) || year < 100 || !Number.isInteger(monthIndex) || monthIndex < 1 || monthIndex > 12) {
+    throw new RangeError(`buildHeatmapGrid: '${month}' is not a YYYY-MM month`);
+  }
+
   // Every date calculation is UTC. Building these from local time shifts the
   // whole calendar by a day for anyone in a negative-offset timezone.
   const firstOfMonth = new Date(Date.UTC(year, monthIndex - 1, 1));

@@ -8,7 +8,13 @@ const MONTH_PATTERN = /^(\d{4})-(\d{2})$/;
 function isValidMonth(month: string): boolean {
   const match = MONTH_PATTERN.exec(month);
   if (!match) return false;
+
+  const year = Number(match[1]);
   const monthNumber = Number(match[2]);
+  // Date.UTC maps years 0-99 to 1900-1999, so '0026-08' would silently render
+  // 1926's calendar - wrong leading pad, and a different February length.
+  // Nothing before Solana existed is a real query anyway.
+  if (year < 2000 || year > 2999) return false;
   return monthNumber >= 1 && monthNumber <= 12;
 }
 

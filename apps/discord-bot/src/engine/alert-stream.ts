@@ -121,8 +121,11 @@ export class AlertStream {
         console.error('alert stream: no pong from the engine; reconnecting');
         this.pongTimer = null;
         // terminate() forces a 'close', which drives the normal backoff path.
+        // Not `terminate?.() ?? close()`: terminate() returns undefined, so
+        // that form called close() every time as well.
         try {
-          socket.terminate?.() ?? socket.close();
+          if (typeof socket.terminate === 'function') socket.terminate();
+          else socket.close();
         } catch {
           // already gone
         }
@@ -141,9 +144,20 @@ export class AlertStream {
     const socket = this.createSocket(this.options.url);
     this.socket = socket;
 
+    /**
+     * True only while `socket` is the connection we are actually using.
+     *
+     * A stop()/start() cycle, or a reconnect, leaves the old socket's handlers
+     * registered. Without this guard a stale 'close' would stop the NEW
+     * socket's heartbeat and schedule a second connection, after which every
+     * alert arrived twice and was posted twice.
+     */
+    const isCurrent = () => this.socket === socket;
+
     // A successful connection resets the backoff. Without this, a long-lived
     // bot that blips once would then wait the full capped delay to come back.
     socket.on('open', () => {
+      if (!isCurrent()) return;
       this.delayMs = this.initialDelayMs;
       this.startHeartbeat(socket);
     });
@@ -155,6 +169,7 @@ export class AlertStream {
     });
 
     socket.on('message', (data: unknown) => {
+      if (!isCurrent()) return;
       let parsed: unknown;
       try {
         parsed = JSON.parse(String(data));
@@ -173,6 +188,9 @@ export class AlertStream {
     });
 
     socket.on('close', () => {
+      // A close from a socket we have already replaced must not touch the
+      // current connection's heartbeat or schedule another reconnect.
+      if (!isCurrent()) return;
       this.stopHeartbeat();
       if (this.stopped) return;
       const delay = this.delayMs;

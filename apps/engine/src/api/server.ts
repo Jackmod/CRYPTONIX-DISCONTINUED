@@ -86,9 +86,20 @@ function isValidWebhookAuth(header: string | undefined, secret: string): boolean
  * /webhooks/helius is exempt because Helius only ever knows the webhook
  * secret; it authenticates itself with that instead (see isValidWebhookAuth).
  */
-function requireApiKey(apiKey: string) {
+function requireAuth(apiKey: string, webhookSecret: string) {
   return (req: Request, res: Response, next: NextFunction) => {
-    if (req.path.startsWith('/webhooks/')) return next();
+    // The webhook route authenticates with the shared secret Helius echoes
+    // back, not the API key. Checking it HERE rather than only inside the
+    // route means a forged delivery is rejected before body-parser reads and
+    // parses up to 2mb of attacker-supplied JSON. The route keeps its own
+    // check as defence in depth.
+    if (req.path.startsWith('/webhooks/')) {
+      if (!isValidWebhookAuth(req.header('authorization'), webhookSecret)) {
+        res.status(401).json({ error: 'invalid webhook authorization' });
+        return;
+      }
+      return next();
+    }
 
     if (!isValidBearer(req.header('authorization'), apiKey)) {
       res.status(401).json({ error: 'missing or invalid API key' });
@@ -119,9 +130,9 @@ export function createServer(
   // to Express's default error handler — which renders an HTML stack trace
   // containing absolute filesystem paths and pinned dependency versions. This
   // engine is publicly reachable by design, so that was handing reconnaissance
-  // to anyone. requireApiKey still calls next() for /webhooks/, so Helius
-  // deliveries are parsed exactly as before.
-  app.use(requireApiKey(apiKey));
+  // to anyone. Both credentials are checked here, so no unauthenticated body
+  // reaches the parser on any route.
+  app.use(requireAuth(apiKey, webhookSecret));
 
   // Helius delivers enhanced transactions in batches; a busy wallet's batch
   // comfortably exceeds express.json()'s 100kb default. Rejecting one with 413

@@ -19,9 +19,18 @@ async function describeChannelProblem(
   if (!me) return null; // cannot tell; do not block on a transient gap
 
   const permissions = (channel as GuildTextBasedChannel).permissionsFor(me);
+
+  // Posting into a thread needs SendMessagesInThreads; SendMessages on the
+  // parent is not enough. Checking only the latter let /setup confirm success
+  // for a thread whose alerts then failed silently — the exact
+  // misconfiguration this check exists to catch.
+  const sendPermission = channel.isThread()
+    ? { flag: PermissionFlagsBits.SendMessagesInThreads, label: 'Send Messages in Threads' }
+    : { flag: PermissionFlagsBits.SendMessages, label: 'Send Messages' };
+
   const missing = [
     permissions?.has(PermissionFlagsBits.ViewChannel) ? null : 'View Channel',
-    permissions?.has(PermissionFlagsBits.SendMessages) ? null : 'Send Messages',
+    permissions?.has(sendPermission.flag) ? null : sendPermission.label,
     permissions?.has(PermissionFlagsBits.EmbedLinks) ? null : 'Embed Links',
   ].filter(Boolean);
 

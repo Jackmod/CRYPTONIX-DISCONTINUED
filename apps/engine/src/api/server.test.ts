@@ -610,4 +610,19 @@ describe('engine API', () => {
     // Every webhook beyond the one the winner kept must have been handed back.
     expect(created_ - deleted).toBe(1);
   });
+
+  it('rejects a forged webhook before its body is ever parsed', async () => {
+    // A forged delivery used to reach body-parser, which would read and parse
+    // up to 2mb of attacker-supplied JSON before the route's own check ran.
+    const app = buildApp();
+
+    const res = await request(app)
+      .post('/webhooks/helius')
+      .set('Content-Type', 'application/json')
+      .set('Authorization', 'wrong-secret')
+      .send('{bad');
+
+    expect(res.status).toBe(401); // not 400: never parsed
+    expect(res.body.error).toBe('invalid webhook authorization');
+  });
 });

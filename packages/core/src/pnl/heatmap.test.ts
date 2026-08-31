@@ -62,6 +62,19 @@ describe('buildHeatmapGrid', () => {
 
     expect(grid.flat().every((cell) => cell.level === 0)).toBe(true);
   });
+
+  it('refuses a two-digit year rather than silently rendering the 1900s', () => {
+    // Date.UTC maps years 0-99 to 1900-1999, so '0026-08' would produce 1926's
+    // calendar: a different starting weekday, and a different February length
+    // in a leap year.
+    expect(() => buildHeatmapGrid([], '0026-08')).toThrow(RangeError);
+    expect(() => buildHeatmapGrid([], '26-08')).toThrow(RangeError);
+  });
+
+  it('refuses a month outside 1-12', () => {
+    expect(() => buildHeatmapGrid([], '2026-00')).toThrow(RangeError);
+    expect(() => buildHeatmapGrid([], '2026-13')).toThrow(RangeError);
+  });
 });
 
 describe('renderHeatmap', () => {
