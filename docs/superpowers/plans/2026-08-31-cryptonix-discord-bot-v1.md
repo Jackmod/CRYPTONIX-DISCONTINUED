@@ -90,7 +90,7 @@ Tasks 1–4 need nothing external. Before Task 5 you need a Discord bot identity
 **Interfaces:**
 - Produces: `HeliusClient.deleteWalletWebhook(webhookId: string): Promise<void>` — resolves on success **and** on 404 (already gone), throws on any other non-2xx. Task 2 consumes it.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append these three cases inside the existing `describe('HeliusClient', ...)` block in `apps/engine/src/helius/client.test.ts`:
 
@@ -128,12 +128,12 @@ Append these three cases inside the existing `describe('HeliusClient', ...)` blo
   });
 ```
 
-- [ ] **Step 2: Run and confirm it fails**
+- [x] **Step 2: Run and confirm it fails**
 
 Run: `pnpm --filter @cryptonix/engine test -- client`
 Expected: FAIL — `client.deleteWalletWebhook is not a function`
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Add this method to the `HeliusClient` class in `apps/engine/src/helius/client.ts`, directly after `createWalletWebhook`:
 
@@ -154,12 +154,12 @@ Add this method to the `HeliusClient` class in `apps/engine/src/helius/client.ts
   }
 ```
 
-- [ ] **Step 4: Run and confirm it passes**
+- [x] **Step 4: Run and confirm it passes**
 
 Run: `pnpm --filter @cryptonix/engine test -- client`
 Expected: PASS — 7 tests in this file
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add apps/engine/src/helius/client.ts apps/engine/src/helius/client.test.ts
@@ -181,7 +181,7 @@ git commit -m "engine: add Helius webhook deletion"
 
 **Critical ordering:** `wallet_trades.wallet_id` and `pnl_daily.wallet_id` are foreign keys onto `wallets.id` (see `packages/db/src/schema.ts`). Deleting the wallet row first raises a foreign-key violation. Children go first, parent last.
 
-- [ ] **Step 1: Add `deleteWalletWebhook` to the test harness's Helius mock**
+- [x] **Step 1: Add `deleteWalletWebhook` to the test harness's Helius mock**
 
 In `apps/engine/src/api/server.test.ts`, the `buildApp()` helper builds a fake Helius client. Add the new method so it is available to every test in the file:
 
@@ -193,7 +193,7 @@ In `apps/engine/src/api/server.test.ts`, the `buildApp()` helper builds a fake H
     } as any;
 ```
 
-- [ ] **Step 2: Write the failing tests**
+- [x] **Step 2: Write the failing tests**
 
 Add these three cases to the `describe('engine API', ...)` block in `apps/engine/src/api/server.test.ts`:
 
@@ -245,12 +245,12 @@ Add these three cases to the `describe('engine API', ...)` block in `apps/engine
   });
 ```
 
-- [ ] **Step 3: Run and confirm it fails**
+- [x] **Step 3: Run and confirm it fails**
 
 Run: `pnpm --filter @cryptonix/engine test -- server`
 Expected: FAIL — the DELETE requests return 404 from Express's default handler because no route is registered
 
-- [ ] **Step 4: Implement `untrackWallet`**
+- [x] **Step 4: Implement `untrackWallet`**
 
 Add this method to the `WalletMonitor` class in `apps/engine/src/monitors/wallet-monitor.ts`, after `trackWallet`. Extend the existing `@cryptonix/db` import so `walletTrades` and `pnlDaily` are in scope, and make sure `eq` is imported from `drizzle-orm`:
 
@@ -281,7 +281,7 @@ Add this method to the `WalletMonitor` class in `apps/engine/src/monitors/wallet
   }
 ```
 
-- [ ] **Step 5: Implement the route**
+- [x] **Step 5: Implement the route**
 
 Add this to `apps/engine/src/api/server.ts`, immediately after the `GET /wallets/:id/balance` route. It uses the file's existing `asyncRoute` wrapper and `parseWalletId` helper, so a rejected promise reaches the error boundary instead of crashing the process:
 
@@ -301,12 +301,12 @@ Add this to `apps/engine/src/api/server.ts`, immediately after the `GET /wallets
   );
 ```
 
-- [ ] **Step 6: Run and confirm it passes**
+- [x] **Step 6: Run and confirm it passes**
 
 Run: `pnpm --filter @cryptonix/engine test`
 Expected: PASS — all engine tests, now 30
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add apps/engine/src/monitors/wallet-monitor.ts apps/engine/src/api/server.ts apps/engine/src/api/server.test.ts
@@ -346,7 +346,7 @@ Pure, I/O-free, and deliberately in `packages/core` rather than the bot: the Pha
 - A break-even day (`realizedPnlSol === 0`) counts as a trading day but as neither a win nor a loss.
 - Ties for best/worst resolve to the earlier date.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `packages/core/src/pnl/summarize.test.ts`:
 
@@ -430,12 +430,12 @@ describe('summarizePnl', () => {
 });
 ```
 
-- [ ] **Step 2: Run and confirm it fails**
+- [x] **Step 2: Run and confirm it fails**
 
 Run: `pnpm --filter @cryptonix/core test -- summarize`
 Expected: FAIL — cannot find module `./summarize`
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Create `packages/core/src/pnl/summarize.ts`:
 
@@ -490,12 +490,12 @@ export function summarizePnl(rows: DailyPnlRow[]): PnlSummary {
 }
 ```
 
-- [ ] **Step 4: Run and confirm it passes**
+- [x] **Step 4: Run and confirm it passes**
 
 Run: `pnpm --filter @cryptonix/core test -- summarize`
 Expected: PASS — 7 tests
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/core/src/pnl/summarize.ts packages/core/src/pnl/summarize.test.ts
@@ -540,7 +540,7 @@ Renders a month of daily PnL as a grid of coloured squares for the Discord embed
 | 4 | Gain, at least half the month's best day | 🟢 |
 | — | Day outside this month (padding) | ⬛ |
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `packages/core/src/pnl/heatmap.test.ts`. The calendar facts asserted here are real: 2026-08-01 falls on a Saturday (Monday-first index 5) and August has 31 days, so the grid is 5 padding cells + 31 days = 36 slots, rounded up to 6 rows of 7.
 
@@ -623,12 +623,12 @@ describe('renderHeatmap', () => {
 });
 ```
 
-- [ ] **Step 2: Run and confirm it fails**
+- [x] **Step 2: Run and confirm it fails**
 
 Run: `pnpm --filter @cryptonix/core test -- heatmap`
 Expected: FAIL — cannot find module `./heatmap`
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Create `packages/core/src/pnl/heatmap.ts`:
 
@@ -709,12 +709,12 @@ export function renderHeatmap(grid: HeatmapCell[][]): string {
 }
 ```
 
-- [ ] **Step 4: Run and confirm it passes**
+- [x] **Step 4: Run and confirm it passes**
 
 Run: `pnpm --filter @cryptonix/core test -- heatmap`
 Expected: PASS — 7 tests
 
-- [ ] **Step 5: Export both modules from the barrel**
+- [x] **Step 5: Export both modules from the barrel**
 
 Add to `packages/core/src/index.ts`:
 
@@ -723,7 +723,7 @@ export * from './pnl/summarize.js';
 export * from './pnl/heatmap.js';
 ```
 
-- [ ] **Step 6: Build and commit**
+- [x] **Step 6: Build and commit**
 
 Run: `pnpm --filter @cryptonix/core build && pnpm --filter @cryptonix/core test`
 Expected: build succeeds, all core tests pass
@@ -749,7 +749,7 @@ git commit -m "core: add calendar heatmap grid and renderer"
 
 **On the duplicated env loader — a deliberate call, not an oversight.** `apps/engine/src/env.ts` walks up from `cwd` to find the repo-root `.env`, because `pnpm --filter … dev` runs with `cwd` set to the app directory and a bare `dotenv/config` misses it. The bot has exactly the same problem, and this plan copies those ~18 lines rather than extracting them. Hoisting a runtime helper into `packages/config` would mean giving that tsconfig-only package a `src/`, a build step, and exports — real structure to carry 18 lines. Each copy carries a comment pointing at its twin so they are fixed together.
 
-- [ ] **Step 1: Create `apps/discord-bot/package.json`**
+- [x] **Step 1: Create `apps/discord-bot/package.json`**
 
 ```json
 {
@@ -780,7 +780,7 @@ git commit -m "core: add calendar heatmap grid and renderer"
 }
 ```
 
-- [ ] **Step 2: Create `apps/discord-bot/tsconfig.json`**
+- [x] **Step 2: Create `apps/discord-bot/tsconfig.json`**
 
 Matches every other package — `rootDir`/`outDir` live here, never in the shared base, and tests are excluded from the build:
 
@@ -796,12 +796,12 @@ Matches every other package — `rootDir`/`outDir` live here, never in the share
 }
 ```
 
-- [ ] **Step 3: Install**
+- [x] **Step 3: Install**
 
 Run: `pnpm install`
 Expected: `@cryptonix/discord-bot` is picked up by the `apps/*` workspace glob; discord.js resolves at 14.25.x
 
-- [ ] **Step 4: Write the failing test**
+- [x] **Step 4: Write the failing test**
 
 Create `apps/discord-bot/src/env.test.ts`. `env.ts` reads `process.env` at import time, so each test imports it fresh with `vi.resetModules()`.
 
@@ -852,12 +852,12 @@ describe('env', () => {
 });
 ```
 
-- [ ] **Step 5: Run and confirm it fails**
+- [x] **Step 5: Run and confirm it fails**
 
 Run: `pnpm --filter @cryptonix/discord-bot test`
 Expected: FAIL — cannot find module `./env`
 
-- [ ] **Step 6: Implement**
+- [x] **Step 6: Implement**
 
 Create `apps/discord-bot/src/env.ts`:
 
@@ -903,7 +903,7 @@ export const env = {
 };
 ```
 
-- [ ] **Step 7: Extend `.env.example`**
+- [x] **Step 7: Extend `.env.example`**
 
 Append to `.env.example` at the repo root (placeholders only — never real values):
 
@@ -918,12 +918,12 @@ ENGINE_WS_URL=ws://localhost:8787/ws
 
 Then copy those six lines into your real `.env` and fill in the values from the Prerequisites section. `.env` is gitignored; keep it that way.
 
-- [ ] **Step 8: Run and confirm it passes**
+- [x] **Step 8: Run and confirm it passes**
 
 Run: `pnpm --filter @cryptonix/discord-bot test`
 Expected: PASS — 2 tests
 
-- [ ] **Step 9: Commit**
+- [x] **Step 9: Commit**
 
 ```bash
 git add apps/discord-bot .env.example
@@ -959,7 +959,7 @@ The single place the bot talks HTTP to the engine. Every command handler goes th
   ```
   Tasks 10 and 11 consume these.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `apps/discord-bot/src/engine/client.test.ts`:
 
@@ -1041,12 +1041,12 @@ describe('EngineClient', () => {
 });
 ```
 
-- [ ] **Step 2: Run and confirm it fails**
+- [x] **Step 2: Run and confirm it fails**
 
 Run: `pnpm --filter @cryptonix/discord-bot test -- client`
 Expected: FAIL — cannot find module `./client`
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Create `apps/discord-bot/src/engine/client.ts`:
 
@@ -1119,12 +1119,12 @@ export class EngineClient {
 }
 ```
 
-- [ ] **Step 4: Run and confirm it passes**
+- [x] **Step 4: Run and confirm it passes**
 
 Run: `pnpm --filter @cryptonix/discord-bot test -- client`
 Expected: PASS — 5 tests
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add apps/discord-bot/src/engine/client.ts apps/discord-bot/src/engine/client.test.ts
@@ -1165,7 +1165,7 @@ Subscribes to the engine's WebSocket and survives it going away. The engine rest
   ```
   `AlertEvent` matches what `apps/engine/src/api/alert-bus.ts` publishes verbatim. Task 11 consumes this class.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `apps/discord-bot/src/engine/alert-stream.test.ts`. The fake socket lets the test drive `open`/`message`/`close` by hand, so nothing here touches a real network:
 
@@ -1302,12 +1302,12 @@ describe('AlertStream', () => {
 });
 ```
 
-- [ ] **Step 2: Run and confirm it fails**
+- [x] **Step 2: Run and confirm it fails**
 
 Run: `pnpm --filter @cryptonix/discord-bot test -- alert-stream`
 Expected: FAIL — cannot find module `./alert-stream`
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Create `apps/discord-bot/src/engine/alert-stream.ts`:
 
@@ -1418,12 +1418,12 @@ export class AlertStream {
 }
 ```
 
-- [ ] **Step 4: Run and confirm it passes**
+- [x] **Step 4: Run and confirm it passes**
 
 Run: `pnpm --filter @cryptonix/discord-bot test -- alert-stream`
 Expected: PASS — 7 tests
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add apps/discord-bot/src/engine/alert-stream.ts apps/discord-bot/src/engine/alert-stream.test.ts
@@ -1457,7 +1457,7 @@ git commit -m "discord-bot: add reconnecting alert stream"
 
 **Sells too, not just buys.** Spec §5.2 names the buy alert, but the engine already publishes `wallet_sell` from the same code path. Rendering only buys would drop half the stream on the floor; the embed colours and labels the two differently.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `apps/discord-bot/src/embeds/wallet-buy.test.ts`:
 
@@ -1516,12 +1516,12 @@ describe('buildWalletTradeMessage', () => {
 });
 ```
 
-- [ ] **Step 2: Run and confirm it fails**
+- [x] **Step 2: Run and confirm it fails**
 
 Run: `pnpm --filter @cryptonix/discord-bot test -- wallet-buy`
 Expected: FAIL — cannot find module `./wallet-buy`
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Create `apps/discord-bot/src/embeds/wallet-buy.ts`:
 
@@ -1585,12 +1585,12 @@ export function buildWalletTradeMessage(payload: WalletAlertPayload) {
 }
 ```
 
-- [ ] **Step 4: Run and confirm it passes**
+- [x] **Step 4: Run and confirm it passes**
 
 Run: `pnpm --filter @cryptonix/discord-bot test -- wallet-buy`
 Expected: PASS — 5 tests
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add apps/discord-bot/src/embeds/wallet-buy.ts apps/discord-bot/src/embeds/wallet-buy.test.ts
@@ -1609,7 +1609,7 @@ git commit -m "discord-bot: add wallet trade embed with Axiom link button"
 - Consumes: `summarizePnl`, `buildHeatmapGrid`, `renderHeatmap`, `HEATMAP_LEGEND`, `DailyPnlRow` — all from `@cryptonix/core` (Tasks 3–4).
 - Produces: `buildPnlEmbed(options: { walletLabel: string; month: string; rows: DailyPnlRow[] }): EmbedBuilder`. Task 10 consumes it.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `apps/discord-bot/src/embeds/pnl.test.ts`:
 
@@ -1677,12 +1677,12 @@ describe('buildPnlEmbed', () => {
 });
 ```
 
-- [ ] **Step 2: Run and confirm it fails**
+- [x] **Step 2: Run and confirm it fails**
 
 Run: `pnpm --filter @cryptonix/discord-bot test -- pnl`
 Expected: FAIL — cannot find module `./pnl`
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Create `apps/discord-bot/src/embeds/pnl.ts`:
 
@@ -1745,12 +1745,12 @@ export function buildPnlEmbed(options: { walletLabel: string; month: string; row
 }
 ```
 
-- [ ] **Step 4: Run and confirm it passes**
+- [x] **Step 4: Run and confirm it passes**
 
 Run: `pnpm --filter @cryptonix/discord-bot test -- pnl`
 Expected: PASS — 6 tests
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add apps/discord-bot/src/embeds/pnl.ts apps/discord-bot/src/embeds/pnl.test.ts
@@ -1790,7 +1790,7 @@ git commit -m "discord-bot: add PnL embed with calendar heatmap"
 - Every handler calls `deferReply()` first. Discord kills an interaction that is not acknowledged within 3 seconds, and a cold backfill query can exceed that.
 - Errors reply ephemerally with `flags: MessageFlags.Ephemeral` (the `ephemeral: true` form is deprecated in discord.js v14).
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `apps/discord-bot/src/commands/commands.test.ts`. The fake interaction implements only the surface the handlers touch, so no Discord connection is involved:
 
@@ -1925,12 +1925,12 @@ describe('/pnl', () => {
 });
 ```
 
-- [ ] **Step 2: Run and confirm it fails**
+- [x] **Step 2: Run and confirm it fails**
 
 Run: `pnpm --filter @cryptonix/discord-bot test -- commands`
 Expected: FAIL — cannot find module `./track`
 
-- [ ] **Step 3: Create the shared command types**
+- [x] **Step 3: Create the shared command types**
 
 Create `apps/discord-bot/src/commands/types.ts`:
 
@@ -1960,7 +1960,7 @@ export function shortAddress(address: string): string {
 }
 ```
 
-- [ ] **Step 4: Implement `/track`**
+- [x] **Step 4: Implement `/track`**
 
 Create `apps/discord-bot/src/commands/track.ts`:
 
@@ -2003,7 +2003,7 @@ export const trackCommand: BotCommand = {
 };
 ```
 
-- [ ] **Step 5: Implement `/untrack`**
+- [x] **Step 5: Implement `/untrack`**
 
 Create `apps/discord-bot/src/commands/untrack.ts`:
 
@@ -2044,7 +2044,7 @@ export const untrackCommand: BotCommand = {
 };
 ```
 
-- [ ] **Step 6: Implement `/pnl`**
+- [x] **Step 6: Implement `/pnl`**
 
 Create `apps/discord-bot/src/commands/pnl.ts`:
 
@@ -2102,7 +2102,7 @@ export const pnlCommand: BotCommand = {
 };
 ```
 
-- [ ] **Step 7: Implement the registry**
+- [x] **Step 7: Implement the registry**
 
 Create `apps/discord-bot/src/commands/registry.ts`. Guild-scoped registration is deliberate: guild commands appear immediately, while global ones can take up to an hour to propagate.
 
@@ -2130,12 +2130,12 @@ if (process.argv[1]?.endsWith('registry.ts') || process.argv[1]?.endsWith('regis
 }
 ```
 
-- [ ] **Step 8: Run and confirm it passes**
+- [x] **Step 8: Run and confirm it passes**
 
 Run: `pnpm --filter @cryptonix/discord-bot test`
 Expected: PASS — all bot tests, now 24
 
-- [ ] **Step 9: Commit**
+- [x] **Step 9: Commit**
 
 ```bash
 git add apps/discord-bot/src/commands
@@ -2153,7 +2153,7 @@ git commit -m "discord-bot: add track, untrack and pnl slash commands"
 - Consumes: everything from Tasks 5–10.
 - Produces: a runnable bot — `pnpm --filter @cryptonix/discord-bot dev`.
 
-- [ ] **Step 1: Write the entrypoint**
+- [x] **Step 1: Write the entrypoint**
 
 Create `apps/discord-bot/src/index.ts`:
 
@@ -2239,12 +2239,12 @@ client.login(env.discordToken).catch((err) => {
 });
 ```
 
-- [ ] **Step 2: Build everything**
+- [x] **Step 2: Build everything**
 
 Run: `pnpm build`
 Expected: every package compiles, `@cryptonix/discord-bot` included
 
-- [ ] **Step 3: Run the full test suite**
+- [x] **Step 3: Run the full test suite**
 
 Run: `pnpm test`
 Expected: PASS — core, db, engine and discord-bot suites all green
@@ -2312,7 +2312,7 @@ Stop the engine (Ctrl-C in terminal 2), wait a few seconds, and start it again.
 
 Expected: the bot logs socket errors while the engine is down but stays alive, then reconnects on its own. Replay the curl from Step 7 and confirm an embed still arrives.
 
-- [ ] **Step 9: Commit**
+- [x] **Step 9: Commit**
 
 ```bash
 git add apps/discord-bot/src/index.ts
