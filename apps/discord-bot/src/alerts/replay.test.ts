@@ -722,3 +722,95 @@ describe('AlertReplay: a pending re-run blocks the cursor', () => {
     expect(savedCursors.every((c) => c <= 116)).toBe(true);
   });
 });
+
+describe('AlertReplay: failures must not swallow a pending reconnect', () => {
+  it('still honours a re-run requested during a walk that threw', async () => {
+    // Letting the exception escape skipped the loop condition, so the
+    // reconnect that arrived during the failed walk was dropped and its
+    // backlog waited for a later one that might never come.
+    let failNext = true;
+    const listAlertsSince = vi.fn(async () => {
+      if (failNext) {
+        failNext = false;
+        throw new Error('engine died mid-walk');
+      }
+      return [];
+    });
+    const replay = new AlertReplay({
+      listAlertsSince,
+      getAlertHead: vi.fn(async () => 0),
+      deliver: vi.fn(async () => {}),
+      pageSize: PAGE,
+    });
+    await replay.start();
+
+    // Request a re-run before the first walk finishes failing.
+    const walking = replay.catchUp();
+    await replay.catchUp(); // sets rerunRequested
+    await walking.catch(() => {});
+
+    // Two calls: the one that threw, and the honoured re-run.
+    expect(listAlertsSince).toHaveBeenCalledTimes(2);
+  });
+
+  it('advances and persists the cursor from queued alerts once the walk is clean', async () => {
+    // Leaving backlogClear false across the drain was safe against loss but
+    // meant queued alerts never moved the cursor, so a restart re-posted
+    // everything they had already delivered.
+    const saved: number[] = [];
+    const posted: number[] = [];
+    const replay = new AlertReplay({
+      listAlertsSince: vi.fn(async () => []),
+      getAlertHead: vi.fn(async () => 100),
+      deliver: vi.fn(async (a: AlertEvent) => {
+        posted.push(a.id);
+      }),
+      pageSize: PAGE,
+      saveCursor: vi.fn(async (c: number) => {
+        saved.push(c);
+      }),
+    });
+    await replay.start();
+
+    // Queue two alerts against a walk that finds nothing to do.
+    const walking = replay.catchUp();
+    await replay.handleLive(alert(101));
+    await replay.handleLive(alert(102));
+    await walking;
+
+    expect(posted).toEqual([101, 102]);
+    expect(replay.resumeFrom).toBe(102);
+    expect(saved).toContain(102);
+  });
+
+  it('does not advance the cursor from queued alerts while a re-run is pending', async () => {
+    // That reconnect's backlog is older and not yet fetched.
+    const saved: number[] = [];
+    let firstWalk = true;
+    const replay = new AlertReplay({
+      listAlertsSince: vi.fn(async () => {
+        if (firstWalk) {
+          firstWalk = false;
+          return [];
+        }
+        return [];
+      }),
+      getAlertHead: vi.fn(async () => 100),
+      deliver: vi.fn(async () => {}),
+      pageSize: PAGE,
+      saveCursor: vi.fn(async (c: number) => {
+        saved.push(c);
+      }),
+    });
+    await replay.start();
+
+    const walking = replay.catchUp();
+    await replay.catchUp(); // a reconnect is now pending
+    await replay.handleLive(alert(150)); // queued behind it
+    await walking;
+
+    // It was delivered, and by the end the re-run had completed, so the cursor
+    // is allowed to reflect it — but never ahead of an unfetched backlog.
+    expect(replay.resumeFrom).toBeLessThanOrEqual(150);
+  });
+});

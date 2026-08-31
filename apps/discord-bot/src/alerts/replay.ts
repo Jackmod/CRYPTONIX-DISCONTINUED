@@ -169,26 +169,38 @@ export class AlertReplay {
     this.catchingUp = true;
     this.backlogClear = false;
     let posted = 0;
+    let walkError: unknown = null;
     try {
       // Walk AND drain both sit inside the re-run loop.
       //
       // The walk goes first because a reconnect's backlog is older than
-      // anything queued live, and draining first put alerts into Discord out
-      // of order. The drain is inside the loop because a reconnect landing
-      // during the drain would otherwise set the flag after the loop had
-      // already exited, and that reconnect's backlog would then wait for some
-      // later one - `stream.onOpen` is the only caller.
+      // anything queued live. The drain is inside the loop because a reconnect
+      // landing during the drain would otherwise set the flag after the loop
+      // had already exited, and that reconnect's backlog would then wait for
+      // some later one - `stream.onOpen` is the only caller.
       do {
         this.rerunRequested = false;
+        walkError = null;
         try {
           posted += await this.walkBacklog();
+        } catch (err) {
+          // Captured, not thrown: letting it escape here skips the loop
+          // condition entirely, so a reconnect that arrived during the failed
+          // walk was silently dropped and its backlog waited for a later one
+          // that might never come. Rethrown below once the loop is done.
+          walkError = err;
         } finally {
-          // Even when the walk throws: leaving the queue undrained strands
-          // every live alert behind a transient engine failure.
+          // Only safe to move the cursor from a queued alert when no reconnect
+          // is pending: that reconnect's backlog is older and not yet fetched.
+          // Leaving it permanently false was safe against loss but meant
+          // queued alerts never advanced or persisted the cursor at all, so a
+          // restart re-posted everything they had already delivered.
+          this.backlogClear = !this.rerunRequested && walkError === null;
           posted += await this.drainQueue();
         }
       } while (this.rerunRequested);
 
+      if (walkError !== null) throw walkError;
       this.backlogClear = true;
     } finally {
       // Held across walk and drain alike. Releasing it earlier let a reconnect
