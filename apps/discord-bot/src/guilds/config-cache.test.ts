@@ -106,4 +106,41 @@ describe('GuildConfigCache', () => {
     // process — one failed channels.fetch per alert, forever.
     expect(cache.entries().map((e) => e.guildId)).not.toContain('g-kicked');
   });
+
+  it('keeps a removal recorded during a FAILED load until one succeeds', async () => {
+    // The retry loop is exactly when this matters: engine down, bot kicked
+    // from a guild, the fire-and-forget deleteGuildConfig also fails. If the
+    // failed attempt dropped the tombstone, the next successful load would
+    // see the guild still present in the engine and restore it permanently.
+    const listGuildConfigs = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('engine down'))
+      .mockResolvedValueOnce([{ guildId: 'g-kicked', alertChannelId: '900000000000000001' }]);
+    const cache = new GuildConfigCache({ listGuildConfigs } as any);
+
+    const first = cache.load();
+    cache.remove('g-kicked'); // kicked while the failing attempt is in flight
+    await first;
+
+    await cache.load(); // the retry succeeds, engine still lists the guild
+
+    expect(cache.entries().map((e) => e.guildId)).not.toContain('g-kicked');
+  });
+
+  it('forgets pending changes once a load has applied them', async () => {
+    const listGuildConfigs = vi
+      .fn()
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([{ guildId: 'g1', alertChannelId: '900000000000000009' }]);
+    const cache = new GuildConfigCache({ listGuildConfigs } as any);
+
+    const loading = cache.load();
+    cache.remove('g1');
+    await loading;
+
+    // A later load must reflect the engine again, not replay that removal.
+    await cache.load();
+
+    expect(cache.entries().map((e) => e.guildId)).toContain('g1');
+  });
 });

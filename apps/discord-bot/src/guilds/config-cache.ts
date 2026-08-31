@@ -38,9 +38,11 @@ export class GuildConfigCache {
   }
 
   async load(): Promise<boolean> {
+    // Not cleared here: loadUntilSuccessful may already be retrying, and a
+    // change made during an earlier failed attempt is still newer than the
+    // snapshot the next attempt will return. They are only cleared once a
+    // load actually succeeds and has applied them.
     this.loadInFlight = true;
-    this.writtenDuringLoad.clear();
-    this.removedDuringLoad.clear();
     try {
       const configs = await this.engine.listGuildConfigs();
       const loaded = new Map(configs.map((config) => [config.guildId, config.alertChannelId]));
@@ -49,6 +51,9 @@ export class GuildConfigCache {
       for (const [guildId, channelId] of this.writtenDuringLoad) loaded.set(guildId, channelId);
       this.channels = loaded;
       this.loadedOnce = true;
+      // Applied — safe to forget now, and only now.
+      this.writtenDuringLoad.clear();
+      this.removedDuringLoad.clear();
       return true;
     } catch (err) {
       // Starting with an empty table is recoverable — crashing here would put
@@ -58,8 +63,6 @@ export class GuildConfigCache {
       return false;
     } finally {
       this.loadInFlight = false;
-      this.writtenDuringLoad.clear();
-      this.removedDuringLoad.clear();
     }
   }
 
