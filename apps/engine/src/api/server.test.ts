@@ -22,7 +22,8 @@ describe('engine API', () => {
     const alertBus = new AlertBus();
     const walletMonitor = new WalletMonitor(db, helius, alertBus);
     const pnlTracker = new PnlTracker(db, helius);
-    return createServer(db, walletMonitor, pnlTracker, alertBus);
+    const solanaRpc = { getBalanceSol: vi.fn().mockResolvedValue(4.2) };
+    return createServer(db, walletMonitor, pnlTracker, alertBus, solanaRpc);
   }
 
   it('POST /wallets creates a wallet and GET /wallets lists it', async () => {
@@ -74,6 +75,17 @@ describe('engine API', () => {
     const res = await request(app).get(`/wallets/${walletId}/pnl`);
     expect(res.status).toBe(200);
     expect(res.body).toEqual([]);
+  });
+
+  it('GET /wallets/:id/balance returns the live SOL balance', async () => {
+    const app = buildApp();
+    const createRes = await request(app).post('/wallets').send({ address: 'Addr1', label: 'Test' });
+    const walletId = createRes.body.id;
+
+    const res = await request(app).get(`/wallets/${walletId}/balance`);
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ walletId, sol: 4.2 });
   });
 
   it('rejects a non-numeric wallet id with 400 instead of hanging the request', async () => {

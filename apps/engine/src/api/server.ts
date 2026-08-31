@@ -6,6 +6,7 @@ import type { HeliusEnhancedTransaction } from '@cryptonix/core';
 import type { WalletMonitor } from '../monitors/wallet-monitor.js';
 import type { PnlTracker } from '../monitors/pnl-tracker.js';
 import type { AlertBus } from './alert-bus.js';
+import type { SolanaRpcClient } from '../solana/balance.js';
 
 /**
  * Express 4 does not forward a rejected promise from an async handler to its
@@ -34,7 +35,13 @@ function parseWalletId(req: Request, res: Response): number | null {
   return walletId;
 }
 
-export function createServer(db: Db, walletMonitor: WalletMonitor, pnlTracker: PnlTracker, _alertBus: AlertBus): Express {
+export function createServer(
+  db: Db,
+  walletMonitor: WalletMonitor,
+  pnlTracker: PnlTracker,
+  _alertBus: AlertBus,
+  solanaRpc: Pick<SolanaRpcClient, 'getBalanceSol'>
+): Express {
   const app = express();
   app.use(express.json());
 
@@ -67,6 +74,21 @@ export function createServer(db: Db, walletMonitor: WalletMonitor, pnlTracker: P
     if (walletId === null) return;
     res.json(await db.select().from(pnlDaily).where(eq(pnlDaily.walletId, walletId)));
   }));
+
+  app.get(
+    '/wallets/:id/balance',
+    asyncRoute(async (req, res) => {
+      const walletId = parseWalletId(req, res);
+      if (walletId === null) return;
+      const [wallet] = await db.select().from(wallets).where(eq(wallets.id, walletId));
+      if (!wallet) {
+        res.status(404).json({ error: 'wallet not found' });
+        return;
+      }
+      const sol = await solanaRpc.getBalanceSol(wallet.address);
+      res.json({ walletId, sol });
+    })
+  );
 
   app.post('/webhooks/helius', asyncRoute(async (req, res) => {
     const body = req.body as HeliusEnhancedTransaction | HeliusEnhancedTransaction[];
