@@ -5,6 +5,7 @@ import { createServer } from './server';
 import { WalletMonitor } from '../monitors/wallet-monitor';
 import { PnlTracker } from '../monitors/pnl-tracker';
 import { AlertBus } from './alert-bus';
+import { HeliusError } from '../helius/client';
 
 const TEST_DB_URL = process.env.TEST_DATABASE_URL ?? 'postgres://postgres:postgres@localhost:5432/cryptonix_test';
 const db = createDb(TEST_DB_URL);
@@ -492,5 +493,29 @@ describe('engine API', () => {
     expect(helius.createWalletWebhook).toHaveBeenCalledTimes(1);
     expect(helius.deleteWalletWebhook).toHaveBeenCalledTimes(1);
     insertSpy.mockRestore();
+  });
+
+  it('POST /wallets answers 502 with the Helius reason, not a bare 500', async () => {
+    // The common cause is a WEBHOOK_BASE_URL Helius cannot reach. Reporting
+    // that as "internal error" sends the operator hunting in the database.
+    const { app, helius } = buildAppWithMocks();
+    helius.createWalletWebhook.mockRejectedValue(
+      new HeliusError('Helius webhook create failed: Invalid webhook URL format', 400)
+    );
+
+    const res = await api(app).post('/wallets').send({ address: VALID_ADDRESS, label: 'X' });
+
+    expect(res.status).toBe(502);
+    expect(res.body.error).toContain('Invalid webhook URL format');
+  });
+
+  it('still answers 500 for a failure that is not from Helius', async () => {
+    const { app, helius } = buildAppWithMocks();
+    helius.createWalletWebhook.mockRejectedValue(new Error('something else entirely'));
+
+    const res = await api(app).post('/wallets').send({ address: VALID_ADDRESS, label: 'X' });
+
+    expect(res.status).toBe(500);
+    expect(res.body.error).toBe('internal error');
   });
 });

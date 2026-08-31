@@ -173,6 +173,16 @@ async function main() {
         ws.close();
         process.exit(1);
       }
+      if (status === 502) {
+        // Helius refused and the engine passed its reason through. By far the
+        // most common cause is a WEBHOOK_BASE_URL Helius cannot reach.
+        console.log('\nSKIPPED: Helius refused to register the webhook.');
+        console.log('   WEBHOOK_BASE_URL must be a public https URL that Helius can POST to.');
+        console.log('   Run `ngrok http 8787`, put that https URL in .env, restart the engine, and retry.');
+        console.log('   Or re-run with --skip-helius to exercise webhook -> alert -> WebSocket -> REST without Helius.');
+        ws.close();
+        process.exit(1);
+      }
       console.log(
         '\nSKIPPED: wallet registration needs a real HELIUS_API_KEY in .env — the rest of the flow was not exercised'
       );

@@ -44,3 +44,21 @@ export const env = {
   apiKey: required('ENGINE_API_KEY'),
   port: Number(process.env.PORT ?? 8787),
 };
+
+// Helius must be able to POST to WEBHOOK_BASE_URL from the public internet.
+// A localhost or private address is accepted by our config but rejected by
+// Helius on every wallet registration ("Invalid webhook URL format"), which
+// otherwise only shows up as a failed /track much later. Say so at startup.
+const webhookHost = (() => {
+  try {
+    return new URL(env.webhookBaseUrl).hostname;
+  } catch {
+    return '';
+  }
+})();
+if (/^(localhost|127\.|0\.0\.0\.0|::1|192\.168\.|10\.)/.test(webhookHost)) {
+  console.warn(
+    `WEBHOOK_BASE_URL points at ${webhookHost}, which Helius cannot reach. ` +
+      'Wallet registration will fail until it is a public URL (e.g. run `ngrok http 8787` and use that https URL).'
+  );
+}

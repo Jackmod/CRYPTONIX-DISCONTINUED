@@ -10,6 +10,7 @@ import type { AlertBus } from './alert-bus.js';
 import type { SolanaRpcClient } from '../solana/balance.js';
 import { isValidSolanaAddress } from '../solana/address.js';
 import { isValidBearer } from './auth.js';
+import { HeliusError } from '../helius/client.js';
 
 const MAX_LABEL_LENGTH = 100;
 
@@ -142,7 +143,20 @@ export function createServer(
       res.status(400).json({ error: `label must be ${MAX_LABEL_LENGTH} characters or fewer` });
       return;
     }
-    const { wallet, created } = await walletMonitor.trackWallet(address, label, Boolean(isMine));
+    let tracked;
+    try {
+      tracked = await walletMonitor.trackWallet(address, label, Boolean(isMine));
+    } catch (err) {
+      if (err instanceof HeliusError) {
+        // Pass Helius's own explanation through. The common cause is a
+        // WEBHOOK_BASE_URL that Helius cannot reach (localhost, or plain http),
+        // and "internal error" would send the operator hunting in the wrong place.
+        res.status(502).json({ error: `Helius rejected the webhook registration: ${err.message}` });
+        return;
+      }
+      throw err;
+    }
+    const { wallet, created } = tracked;
     if (!created) {
       // Already tracked. 409 with the existing row lets the caller say so
       // plainly instead of surfacing a constraint violation as a 500.

@@ -7,6 +7,23 @@ const HELIUS_BASE = 'https://api.helius.xyz/v0';
 const DEFAULT_REQUESTS_PER_SECOND = 8;
 const MAX_RETRIES = 4;
 
+/**
+ * A refusal from Helius, carrying its own explanation.
+ *
+ * Routes catch this to answer 502 with the upstream reason instead of a bare
+ * 500. The difference matters: "Invalid webhook URL format" tells you
+ * WEBHOOK_BASE_URL points somewhere Helius cannot reach, whereas "internal
+ * error" sends you looking at your own database. The message is Helius's
+ * response body only -- the api key travels in the query string and is never
+ * echoed back.
+ */
+export class HeliusError extends Error {
+  constructor(message: string, readonly status: number) {
+    super(message);
+    this.name = 'HeliusError';
+  }
+}
+
 export interface HeliusClientConfig {
   apiKey: string;
   webhookBaseUrl: string;
@@ -73,7 +90,7 @@ export class HeliusClient {
         authHeader: this.config.webhookSecret,
       }),
     });
-    if (!res.ok) throw new Error(`Helius webhook create failed: ${res.status} ${await res.text()}`);
+    if (!res.ok) throw new HeliusError(`Helius webhook create failed: ${await res.text()}`, res.status);
     const data = (await res.json()) as { webhookID: string };
     return data.webhookID;
   }
@@ -90,7 +107,7 @@ export class HeliusClient {
       method: 'DELETE',
     });
     if (res.status === 404) return;
-    if (!res.ok) throw new Error(`Helius webhook delete failed: ${res.status} ${await res.text()}`);
+    if (!res.ok) throw new HeliusError(`Helius webhook delete failed: ${await res.text()}`, res.status);
   }
 
   async getTransactionHistory(address: string, before?: string): Promise<HeliusEnhancedTransaction[]> {
@@ -100,7 +117,7 @@ export class HeliusClient {
     if (before) url.searchParams.set('before', before);
 
     const res = await this.fetchWithRetry(url.toString());
-    if (!res.ok) throw new Error(`Helius history fetch failed: ${res.status} ${await res.text()}`);
+    if (!res.ok) throw new HeliusError(`Helius history fetch failed: ${await res.text()}`, res.status);
     return res.json() as Promise<HeliusEnhancedTransaction[]>;
   }
 }
