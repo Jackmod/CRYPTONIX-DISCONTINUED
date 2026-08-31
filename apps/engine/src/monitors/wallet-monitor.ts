@@ -17,18 +17,24 @@ export class WalletMonitor {
   }
 
   async handleWebhookPayload(transactions: HeliusEnhancedTransaction[]) {
-    for (const tx of transactions) {
-      await this.handleTransaction(tx);
+    // Fetch the tracked wallets once per batch, not once per transaction, and
+    // keep the fetch itself inside the error boundary: a transient DB failure
+    // here must not abort the whole batch (spec §9 fault isolation).
+    let trackedWallets: (typeof wallets.$inferSelect)[];
+    try {
+      trackedWallets = await this.db.select().from(wallets);
+    } catch (err) {
+      console.error('wallet monitor: failed loading tracked wallets, dropping this batch', err);
+      return;
     }
-  }
 
-  private async handleTransaction(tx: HeliusEnhancedTransaction) {
-    const trackedWallets = await this.db.select().from(wallets);
-    for (const wallet of trackedWallets) {
-      try {
-        await this.handleTransactionForWallet(tx, wallet);
-      } catch (err) {
-        console.error(`wallet monitor: failed processing tx ${tx.signature} for wallet ${wallet.id}`, err);
+    for (const tx of transactions) {
+      for (const wallet of trackedWallets) {
+        try {
+          await this.handleTransactionForWallet(tx, wallet);
+        } catch (err) {
+          console.error(`wallet monitor: failed processing tx ${tx.signature} for wallet ${wallet.id}`, err);
+        }
       }
     }
   }

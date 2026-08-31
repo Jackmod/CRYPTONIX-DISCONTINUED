@@ -81,6 +81,39 @@ describe('WalletMonitor', () => {
 
     const trades = await db.select().from(walletTrades);
     expect(trades).toHaveLength(1);
+    // the duplicate must not produce a second alert row or a second bus event
+    expect(await db.select().from(alerts)).toHaveLength(1);
+  });
+
+  it('one failing wallet does not stop the others in the same batch', async () => {
+    const alertBus = new AlertBus();
+    const published: unknown[] = [];
+    alertBus.on('alert', (a) => published.push(a));
+    const monitor = new WalletMonitor(db, fakeHelius(), alertBus);
+    await monitor.trackWallet('BadAddr', 'Broken Wallet', false);
+    await monitor.trackWallet('Addr1', 'Good Wallet', true);
+
+    // make parsing blow up for the first wallet only
+    const realParse = monitor as unknown as {
+      handleTransactionForWallet: (tx: HeliusEnhancedTransaction, w: { address: string }) => Promise<void>;
+    };
+    const original = realParse.handleTransactionForWallet.bind(monitor);
+    realParse.handleTransactionForWallet = async (tx, w) => {
+      if (w.address === 'BadAddr') throw new Error('simulated per-wallet failure');
+      return original(tx, w);
+    };
+
+    await monitor.handleWebhookPayload([
+      swapTx({
+        tokenTransfers: [{ fromUserAccount: 'Pool', toUserAccount: 'Addr1', mint: 'Mint1', tokenAmount: 1000 }],
+        nativeTransfers: [{ fromUserAccount: 'Addr1', toUserAccount: 'Pool', amount: 2_000_000_000 }],
+      }),
+    ]);
+
+    // the good wallet's trade still landed despite the other wallet throwing
+    const trades = await db.select().from(walletTrades);
+    expect(trades).toHaveLength(1);
+    expect(published).toHaveLength(1);
   });
 
   it('a transaction irrelevant to any tracked wallet produces no trade or alert', async () => {
