@@ -59,16 +59,25 @@ const stream = new AlertStream({ url: env.engineWsUrl, apiKey: env.engineApiKey 
 client.once(Events.ClientReady, async (ready) => {
   console.log(`discord bot ready as ${ready.user.tag}`);
 
-  await guildConfigs.load();
-  console.log(`loaded alert routing for ${guildConfigs.entries().length} server(s)`);
+  // Not awaited: if the engine is down right now this retries in the
+  // background rather than blocking login, so /setup still works and the
+  // routing table fills in as soon as the engine is reachable.
+  void guildConfigs.loadUntilSuccessful().then(() => {
+    console.log(`loaded alert routing for ${guildConfigs.entries().length} server(s)`);
+  });
 
   stream.onAlert((alert) => {
-    void fanOutAlert(alert, guildConfigs, async (channelId, message) => {
+    // fanOutAlert guards each guild's send individually, but building the
+    // message happens before that loop. An unhandled rejection here would
+    // take the process down, so the whole call gets a boundary.
+    fanOutAlert(alert, guildConfigs, async (channelId, message) => {
       const channel = await client.channels.fetch(channelId);
       if (!channel?.isTextBased() || !('send' in channel)) {
         throw new Error(`channel ${channelId} is not a text channel the bot can post to`);
       }
       await channel.send(message as Parameters<typeof channel.send>[0]);
+    }).catch((err) => {
+      console.error(`failed to fan out alert ${alert.refId}`, err);
     });
   });
 

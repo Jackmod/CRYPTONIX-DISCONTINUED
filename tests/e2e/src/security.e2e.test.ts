@@ -238,8 +238,13 @@ describe('input validation', () => {
       'So1111111111111111111111111111111111111110O', // base58-illegal chars
       'short',
       ' '.repeat(44),
-      `${ADDRESSES[0]} `, // trailing null byte
+      // Escapes on purpose: a literal NUL in the source makes git treat this
+      // file as binary and stop showing diffs for it.
+      `${ADDRESSES[0]}` + '\u0000', // trailing null byte
+      '\u0000' + `${ADDRESSES[0]}`, // leading null byte
       `${ADDRESSES[0]} `, // trailing space
+      ` ${ADDRESSES[0]}`, // leading space
+      `${ADDRESSES[0]}` + String.fromCharCode(10), // trailing newline
     ];
 
     for (const address of bad) {

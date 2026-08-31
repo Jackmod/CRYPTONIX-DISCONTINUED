@@ -1,4 +1,4 @@
-import { SlashCommandBuilder } from 'discord.js';
+import { PermissionFlagsBits, SlashCommandBuilder } from 'discord.js';
 import { describeError, shortAddress, type BotCommand } from './types.js';
 
 export const trackCommand: BotCommand = {
@@ -12,7 +12,11 @@ export const trackCommand: BotCommand = {
         .addStringOption((opt) => opt.setName('address').setDescription('Solana wallet address').setRequired(true))
         .addStringOption((opt) => opt.setName('label').setDescription('A name for this wallet'))
         .addBooleanOption((opt) => opt.setName('mine').setDescription('Is this your own wallet?'))
-    ),
+    )
+    // Tracking consumes one of the Helius free tier's webhook address slots
+    // and starts a backfill against a shared quota, and the wallet becomes
+    // visible in every server the bot is in. Not a per-member action.
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
 
   async execute(interaction, { engine }) {
     // Registering a webhook and kicking off a backfill can outrun Discord's

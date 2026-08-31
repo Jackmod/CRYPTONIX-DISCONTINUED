@@ -18,8 +18,15 @@ function signedSol(value: number): string {
 
 export function buildPnlEmbed(options: { walletLabel: string; month: string; rows: DailyPnlRow[] }): EmbedBuilder {
   const { walletLabel, month, rows } = options;
-  const summary = summarizePnl(rows);
-  const grid = buildHeatmapGrid(rows, month);
+
+  // GET /wallets/:id/pnl returns every day the wallet has ever traded, and
+  // buildHeatmapGrid already scopes itself to `month`. Summarising the
+  // unfiltered rows put all-time Realized, Win rate, Trading days, Best and
+  // Worst under a heading that names one month, beside a grid showing only
+  // that month. Scope both to the same window.
+  const monthRows = rows.filter((row) => row.date.startsWith(`${month}-`));
+  const summary = summarizePnl(monthRows);
+  const grid = buildHeatmapGrid(monthRows, month);
 
   const color =
     summary.realizedSol > 0 ? POSITIVE_COLOR : summary.realizedSol < 0 ? NEGATIVE_COLOR : NEUTRAL_COLOR;

@@ -205,4 +205,37 @@ describe('HeliusClient', () => {
     expect(error.message).toContain('[redacted: webhook secret]');
     expect(error.message).toContain('[redacted: api key]');
   });
+
+  it('caps a huge Retry-After instead of stalling for hours', async () => {
+    // Retry-After: 3600 would hold the request open across the whole retry
+    // budget, expiring the Discord interaction and stalling every caller
+    // queued behind the shared rate limiter.
+    const slept: number[] = [];
+    const fetchMock = fetch as ReturnType<typeof vi.fn>;
+    fetchMock
+      .mockResolvedValueOnce({ ok: false, status: 429, headers: { get: (h: string) => (h === 'retry-after' ? '3600' : null) }, text: async () => 'x' })
+      .mockResolvedValueOnce({ ok: true, status: 200, headers: { get: () => null }, json: async () => [] });
+    const client = new HeliusClient({
+      apiKey: 'key1',
+      webhookBaseUrl: 'https://e.com',
+      webhookSecret: 's',
+      clock: { now: () => Date.now(), sleep: async (ms: number) => { slept.push(ms); } },
+    });
+
+    await client.getTransactionHistory('Addr1');
+
+    expect(Math.max(...slept)).toBeLessThanOrEqual(8_000);
+  });
+
+  it('does not mangle upstream text when a secret is empty', async () => {
+    // String.split('') splits between every character, so an empty secret
+    // would rebuild the message with a redaction marker between each one.
+    const fetchMock = fetch as ReturnType<typeof vi.fn>;
+    fetchMock.mockResolvedValue({ ok: false, status: 400, headers: { get: () => null }, text: async () => 'plain upstream message' });
+    const client = new HeliusClient({ apiKey: '', webhookBaseUrl: 'https://e.com', webhookSecret: '', clock: instantClock });
+
+    const error = await client.getTransactionHistory('Addr1').catch((e) => e);
+
+    expect(error.message).toContain('plain upstream message');
+  });
 });

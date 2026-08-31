@@ -58,4 +58,38 @@ describe('buildPnlEmbed', () => {
     expect(best?.value).toContain('2026-08-01');
     expect(worst?.value).toContain('2026-08-02');
   });
+
+  it('summarises only the month it is titled with', () => {
+    // GET /wallets/:id/pnl returns every day the wallet ever traded. Before
+    // this, the heatmap showed August while Realized/Win rate/Best/Worst
+    // silently reported all-time figures under an August heading.
+    const data = buildPnlEmbed({
+      walletLabel: 'Me',
+      month: '2026-08',
+      rows: [
+        { date: '2026-07-15', realizedPnlSol: 100, tradeCount: 5 }, // different month
+        { date: '2026-08-01', realizedPnlSol: 2, tradeCount: 1 },
+        { date: '2026-09-02', realizedPnlSol: -50, tradeCount: 3 }, // different month
+      ],
+    }).toJSON();
+
+    const realized = data.fields?.find((f) => f.name.includes('Realized'));
+    const tradingDays = data.fields?.find((f) => f.name.includes('Trading days'));
+    const best = data.fields?.find((f) => f.name.includes('Best'));
+
+    expect(realized?.value).toContain('+2.0000');
+    expect(tradingDays?.value).toBe('1');
+    expect(best?.value).toContain('2026-08-01');
+  });
+
+  it('reports an empty month as empty even when other months have data', () => {
+    const data = buildPnlEmbed({
+      walletLabel: 'Me',
+      month: '2026-08',
+      rows: [{ date: '2026-07-15', realizedPnlSol: 100, tradeCount: 5 }],
+    }).toJSON();
+
+    const winRate = data.fields?.find((f) => f.name.includes('Win rate'));
+    expect(winRate?.value).toBe('—');
+  });
 });

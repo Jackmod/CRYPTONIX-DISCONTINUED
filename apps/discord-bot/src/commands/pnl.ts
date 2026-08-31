@@ -2,7 +2,15 @@ import { SlashCommandBuilder } from 'discord.js';
 import { buildPnlEmbed } from '../embeds/pnl.js';
 import { describeError, type BotCommand } from './types.js';
 
-const MONTH_PATTERN = /^\d{4}-\d{2}$/;
+const MONTH_PATTERN = /^(\d{4})-(\d{2})$/;
+
+/** Shape alone is not enough: 2026-00 and 2026-13 would render a blank grid. */
+function isValidMonth(month: string): boolean {
+  const match = MONTH_PATTERN.exec(month);
+  if (!match) return false;
+  const monthNumber = Number(match[2]);
+  return monthNumber >= 1 && monthNumber <= 12;
+}
 
 /** Current month in UTC, matching the UTC calendar maths in the heatmap. */
 function currentMonth(): string {
@@ -20,7 +28,7 @@ export const pnlCommand: BotCommand = {
     await interaction.deferReply();
 
     const month = interaction.options.getString('month') ?? currentMonth();
-    if (!MONTH_PATTERN.test(month)) {
+    if (!isValidMonth(month)) {
       await interaction.editReply('⚠️ Month must look like `YYYY-MM`, for example `2026-08`.');
       return;
     }

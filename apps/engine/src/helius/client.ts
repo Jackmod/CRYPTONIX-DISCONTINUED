@@ -6,6 +6,8 @@ const HELIUS_BASE = 'https://api.helius.xyz/v0';
 /** Free tier allows 10 req/s; 8 leaves headroom for the Solana RPC client. */
 const DEFAULT_REQUESTS_PER_SECOND = 8;
 const MAX_RETRIES = 4;
+/** Ceiling for any single backoff, honoured Retry-After included. */
+const MAX_BACKOFF_MS = 8_000;
 
 /**
  * A refusal from Helius, carrying its own explanation.
@@ -100,10 +102,13 @@ export class HeliusClient {
       if (!retryable || attempt >= MAX_RETRIES) return res;
 
       // Helius sends Retry-After on 429; honour it rather than guessing.
+      // Honour Retry-After, but cap it. A Retry-After of 3600 would otherwise
+      // hold this request open for hours across the retry budget, expiring the
+      // Discord interaction that triggered it and stalling every other caller
+      // queued behind the shared rate limiter.
       const retryAfter = Number(res.headers?.get?.('retry-after'));
-      const backoffMs = Number.isFinite(retryAfter) && retryAfter > 0
-        ? retryAfter * 1000
-        : Math.min(2 ** attempt * 250, 8_000);
+      const requested = Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter * 1000 : 2 ** attempt * 250;
+      const backoffMs = Math.min(requested, MAX_BACKOFF_MS);
       console.warn(`helius ${res.status}; retrying in ${backoffMs}ms (attempt ${attempt + 1}/${MAX_RETRIES})`);
       await this.sleep(backoffMs);
     }

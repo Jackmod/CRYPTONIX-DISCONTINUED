@@ -41,11 +41,29 @@ export class WalletMonitor {
         // sit there answering 409 "already tracked" forever while receiving no
         // alerts. Register a webhook and heal it instead.
         const healedWebhookId = await this.helius.createWalletWebhook(address);
-        const [healed] = await this.db
-          .update(wallets)
-          .set({ heliusWebhookId: healedWebhookId })
-          .where(eq(wallets.id, existing.id))
-          .returning();
+
+        let healed: typeof wallets.$inferSelect | undefined;
+        try {
+          [healed] = await this.db
+            .update(wallets)
+            .set({ heliusWebhookId: healedWebhookId })
+            .where(eq(wallets.id, existing.id))
+            .returning();
+        } catch (err) {
+          // Same invariant as the insert path: a webhook exists that no row
+          // references. Release it before the error escapes.
+          await this.releaseWebhook(healedWebhookId);
+          throw err;
+        }
+
+        if (!healed) {
+          // The row was untracked between our SELECT and this UPDATE, so the
+          // webhook we just made belongs to nothing. Release it and loop —
+          // the address is free now and the next pass registers it properly.
+          await this.releaseWebhook(healedWebhookId);
+          continue;
+        }
+
         console.warn(`wallet ${existing.id} had no Helius webhook; re-registered as ${healedWebhookId}`);
         return { wallet: healed, created: false };
       }

@@ -48,7 +48,27 @@ describe('GuildConfigCache', () => {
     const engine = { listGuildConfigs: vi.fn().mockRejectedValue(new Error('engine unreachable')) } as any;
     const cache = new GuildConfigCache(engine);
 
-    await expect(cache.load()).resolves.toBeUndefined();
+    // load() reports failure rather than throwing, so the caller can retry.
+    await expect(cache.load()).resolves.toBe(false);
     expect(cache.entries()).toHaveLength(0);
+    expect(cache.isLoaded).toBe(false);
+  });
+
+  it('keeps retrying until a load succeeds', async () => {
+    // A single failed load at startup used to leave the routing table empty
+    // for the life of the process: alerts kept arriving and fanning out to
+    // nobody, with no error and no recovery short of a restart.
+    const listGuildConfigs = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('engine down'))
+      .mockRejectedValueOnce(new Error('engine still down'))
+      .mockResolvedValueOnce([{ guildId: 'g1', alertChannelId: 'c1' }]);
+    const cache = new GuildConfigCache({ listGuildConfigs } as any);
+
+    await cache.loadUntilSuccessful(0, async () => {});
+
+    expect(listGuildConfigs).toHaveBeenCalledTimes(3);
+    expect(cache.entries()).toEqual([{ guildId: 'g1', alertChannelId: 'c1' }]);
+    expect(cache.isLoaded).toBe(true);
   });
 });

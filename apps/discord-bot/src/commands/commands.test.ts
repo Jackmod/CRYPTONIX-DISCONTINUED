@@ -203,3 +203,45 @@ describe('/setup', () => {
     expect(JSON.stringify(editReply.mock.calls[0][0])).toContain('engine');
   });
 });
+
+describe('command permissions', () => {
+  it('gates every command that changes shared state behind Manage Server', () => {
+    // The wallet list is shared by every server the bot is in. /untrack
+    // deletes wallet_trades and pnl_daily rows that live delivery cannot
+    // rebuild, so an unprivileged member of any one guild could destroy every
+    // other guild's history. /track consumes a Helius address slot.
+    for (const command of [setupCommand, trackCommand, untrackCommand]) {
+      const json = command.data.toJSON() as { default_member_permissions?: string | null };
+      expect(json.default_member_permissions, `${command.data.name} must be gated`).toBeTruthy();
+    }
+  });
+
+  it('leaves the read-only /pnl open to everyone', () => {
+    const json = pnlCommand.data.toJSON() as { default_member_permissions?: string | null };
+    expect(json.default_member_permissions ?? null).toBeNull();
+  });
+});
+
+describe('/pnl month validation', () => {
+  it.each(['2026-00', '2026-13', '2026-99', 'August', '26-08', '2026-8'])(
+    'rejects %s rather than rendering a blank grid',
+    async (month) => {
+      const engine = { listWallets: vi.fn(), getPnl: vi.fn() } as any;
+      const { interaction, editReply } = fakeInteraction({ wallet: null, month });
+
+      await pnlCommand.execute(interaction, { engine, guildConfigs: {} as any });
+
+      expect(engine.listWallets).not.toHaveBeenCalled();
+      expect(JSON.stringify(editReply.mock.calls[0][0])).toContain('YYYY-MM');
+    }
+  );
+
+  it.each(['2026-01', '2026-08', '2026-12'])('accepts %s', async (month) => {
+    const engine = { listWallets: vi.fn().mockResolvedValue([]), getPnl: vi.fn() } as any;
+    const { interaction } = fakeInteraction({ wallet: null, month });
+
+    await pnlCommand.execute(interaction, { engine, guildConfigs: {} as any });
+
+    expect(engine.listWallets).toHaveBeenCalled();
+  });
+});

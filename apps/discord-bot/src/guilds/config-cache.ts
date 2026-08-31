@@ -8,18 +8,43 @@ import type { EngineClient } from '../engine/client.js';
  */
 export class GuildConfigCache {
   private channels = new Map<string, string>();
+  private loadedOnce = false;
 
   constructor(private engine: Pick<EngineClient, 'listGuildConfigs'>) {}
 
-  async load(): Promise<void> {
+  /** True once a load has actually succeeded. */
+  get isLoaded(): boolean {
+    return this.loadedOnce;
+  }
+
+  async load(): Promise<boolean> {
     try {
       const configs = await this.engine.listGuildConfigs();
       this.channels = new Map(configs.map((config) => [config.guildId, config.alertChannelId]));
+      this.loadedOnce = true;
+      return true;
     } catch (err) {
-      // Starting with an empty table is recoverable — /setup repopulates it,
-      // and the next load() picks up the rest. Crashing here would put the bot
-      // in a restart loop whenever the engine came up second.
-      console.error('could not load guild configs; starting with none', err);
+      // Starting with an empty table is recoverable — crashing here would put
+      // the bot in a restart loop whenever the engine came up second. But it
+      // must not be permanent: see loadUntilSuccessful.
+      console.error('could not load guild configs', err);
+      return false;
+    }
+  }
+
+  /**
+   * Keeps retrying until a load succeeds.
+   *
+   * A single load() at startup was not enough. If the engine happened to be
+   * down for those few seconds, the routing table stayed empty for the life of
+   * the process: the alert socket reconnects on its own, so alerts kept
+   * arriving and kept fanning out to nobody, with no error and no recovery
+   * short of a restart or someone re-running /setup in every server.
+   */
+  async loadUntilSuccessful(retryDelayMs = 5_000, sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))) {
+    while (!(await this.load())) {
+      console.error(`retrying guild config load in ${retryDelayMs}ms`);
+      await sleep(retryDelayMs);
     }
   }
 
