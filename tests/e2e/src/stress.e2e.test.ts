@@ -6,6 +6,9 @@ let stack: E2EStack;
 
 afterEach(async () => {
   await stack?.close();
+  // Drop the reference so a test that never builds a stack does not inherit
+  // the previous one and close it a second time.
+  stack = undefined as unknown as E2EStack;
 });
 
 async function deliver(baseUrl: string, transactions: unknown[]) {

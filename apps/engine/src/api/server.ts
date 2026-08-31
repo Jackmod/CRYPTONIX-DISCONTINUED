@@ -125,9 +125,13 @@ export function createServer(
   }));
 
   app.post('/wallets', asyncRoute(async (req, res) => {
-    const { address, label, isMine } = (req.body ?? {}) as { address?: string; label?: string; isMine?: boolean };
-    if (!address || !label) {
-      res.status(400).json({ error: 'address and label are required' });
+    const { address, label, isMine } = (req.body ?? {}) as { address?: unknown; label?: unknown; isMine?: unknown };
+    // typeof, not truthiness: `[]` and `{}` are both truthy and both have a
+    // `.length` that clears the cap below (0 and undefined), so a non-string
+    // label used to reach the database and get echoed into embeds as '' or
+    // '[object Object]'.
+    if (typeof address !== 'string' || typeof label !== 'string' || !address || !label) {
+      res.status(400).json({ error: 'address and label are required, and must be strings' });
       return;
     }
     // trackWallet registers a Helius webhook before writing anything, and the
@@ -156,17 +160,21 @@ export function createServer(
       }
       throw err;
     }
-    const { wallet, created } = tracked;
-    if (!created) {
-      // Already tracked. 409 with the existing row lets the caller say so
-      // plainly instead of surfacing a constraint violation as a 500.
+    const { wallet, created, healed } = tracked;
+    if (!created && !healed) {
+      // Already tracked and healthy. 409 with the existing row lets the caller
+      // say so plainly instead of surfacing a constraint violation as a 500.
       res.status(409).json({ error: 'wallet is already tracked', wallet });
       return;
     }
-    res.status(201).json(wallet);
 
-    // Only a genuinely new wallet needs a backfill; re-running it for an
-    // existing one would burn Helius quota to re-fetch rows we already have.
+    // 200 rather than 201 for a heal: the row already existed, we repaired it.
+    res.status(created ? 201 : 200).json(wallet);
+
+    // A new wallet needs its history. So does a healed one — it reached us
+    // mid-repair and its trades may be partly gone. An untouched, healthy
+    // wallet does not: re-running the backfill would burn Helius quota
+    // re-fetching rows we already hold.
     pnlTracker.backfillWallet(wallet.id, wallet.address).catch((err) => {
       console.error(`pnl backfill failed for wallet ${wallet.id}`, err);
     });

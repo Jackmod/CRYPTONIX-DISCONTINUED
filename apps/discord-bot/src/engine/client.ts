@@ -92,6 +92,15 @@ export class EngineClient {
     return res.json() as Promise<GuildConfig[]>;
   }
 
+  /**
+   * Removes a server's routing row. Called when the bot is kicked: without it
+   * the row outlives the membership, gets reloaded on the next restart, and
+   * every alert then fails fetching a channel the bot can no longer see.
+   */
+  async deleteGuildConfig(guildId: string): Promise<void> {
+    await this.request(`/discord/guilds/${guildId}`, { method: 'DELETE' });
+  }
+
   async setGuildConfig(guildId: string, alertChannelId: string, setupBy?: string): Promise<GuildConfig> {
     const res = await this.request(`/discord/guilds/${guildId}`, {
       method: 'PUT',

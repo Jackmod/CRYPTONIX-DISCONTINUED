@@ -9,6 +9,17 @@ import type { EngineClient } from '../engine/client.js';
 export class GuildConfigCache {
   private channels = new Map<string, string>();
   private loadedOnce = false;
+  /**
+   * Guilds written locally while a load was in flight.
+   *
+   * load() replaces the whole map with the engine's answer. A /setup landing
+   * between the request going out and the response coming back would be
+   * overwritten by that older snapshot — the engine would report the guild
+   * configured while the bot posted nothing there until a restart. These
+   * entries are re-applied on top of whatever the load returns.
+   */
+  private writtenDuringLoad = new Map<string, string>();
+  private loadInFlight = false;
 
   constructor(private engine: Pick<EngineClient, 'listGuildConfigs'>) {}
 
@@ -18,9 +29,14 @@ export class GuildConfigCache {
   }
 
   async load(): Promise<boolean> {
+    this.loadInFlight = true;
+    this.writtenDuringLoad.clear();
     try {
       const configs = await this.engine.listGuildConfigs();
-      this.channels = new Map(configs.map((config) => [config.guildId, config.alertChannelId]));
+      const loaded = new Map(configs.map((config) => [config.guildId, config.alertChannelId]));
+      // Local writes win: they are newer than this snapshot by construction.
+      for (const [guildId, channelId] of this.writtenDuringLoad) loaded.set(guildId, channelId);
+      this.channels = loaded;
       this.loadedOnce = true;
       return true;
     } catch (err) {
@@ -29,6 +45,9 @@ export class GuildConfigCache {
       // must not be permanent: see loadUntilSuccessful.
       console.error('could not load guild configs', err);
       return false;
+    } finally {
+      this.loadInFlight = false;
+      this.writtenDuringLoad.clear();
     }
   }
 
@@ -50,10 +69,12 @@ export class GuildConfigCache {
 
   set(guildId: string, alertChannelId: string) {
     this.channels.set(guildId, alertChannelId);
+    if (this.loadInFlight) this.writtenDuringLoad.set(guildId, alertChannelId);
   }
 
   remove(guildId: string) {
     this.channels.delete(guildId);
+    if (this.loadInFlight) this.writtenDuringLoad.delete(guildId);
   }
 
   entries() {

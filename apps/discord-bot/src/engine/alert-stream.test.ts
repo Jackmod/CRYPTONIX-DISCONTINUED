@@ -1,15 +1,23 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { AlertStream, type AlertSocket } from './alert-stream';
 
 class FakeSocket implements AlertSocket {
   handlers: Record<string, ((...args: any[]) => void)[]> = {};
   closed = false;
+  terminated = false;
+  pings = 0;
 
   on(event: string, handler: (...args: any[]) => void) {
     (this.handlers[event] ??= []).push(handler);
   }
   close() {
     this.closed = true;
+  }
+  ping() {
+    this.pings++;
+  }
+  terminate() {
+    this.terminated = true;
   }
   emit(event: string, ...args: any[]) {
     for (const handler of this.handlers[event] ?? []) handler(...args);
@@ -33,6 +41,7 @@ function build() {
     },
     initialDelayMs: 100,
     maxDelayMs: 800,
+    heartbeatMs: 0, // off by default; the heartbeat tests opt in
   });
   return { stream, sockets, delays, runPending: () => pending.shift()?.() };
 }
@@ -126,5 +135,123 @@ describe('AlertStream', () => {
 
     expect(sockets).toHaveLength(1);
     expect(sockets[0].closed).toBe(true);
+  });
+});
+
+describe('AlertStream heartbeat', () => {
+  it('terminates a socket that stops answering pings', async () => {
+    // A half-open connection (NAT reap, host death without a FIN) emits no
+    // 'close', so backoff driven only off that event waits forever while
+    // alerts silently stop. The heartbeat turns that silence into a close.
+    vi.useFakeTimers();
+    const sockets: FakeSocket[] = [];
+    const stream = new AlertStream({
+      url: 'ws://engine/ws',
+      createSocket: () => {
+        const socket = new FakeSocket();
+        sockets.push(socket);
+        return socket;
+      },
+      schedule: () => {},
+      heartbeatMs: 1_000,
+      heartbeatTimeoutMs: 500,
+    });
+    stream.start();
+    sockets[0].emit('open');
+
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(sockets[0].pings).toBe(1);
+    expect(sockets[0].terminated).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(500); // pong never arrives
+    expect(sockets[0].terminated).toBe(true);
+
+    stream.stop();
+    vi.useRealTimers();
+  });
+
+  it('keeps a socket that answers its pings', async () => {
+    vi.useFakeTimers();
+    const sockets: FakeSocket[] = [];
+    const stream = new AlertStream({
+      url: 'ws://engine/ws',
+      createSocket: () => {
+        const socket = new FakeSocket();
+        sockets.push(socket);
+        return socket;
+      },
+      schedule: () => {},
+      heartbeatMs: 1_000,
+      heartbeatTimeoutMs: 500,
+    });
+    stream.start();
+    sockets[0].emit('open');
+
+    // Answer the ping, then run past the timeout window it opened. Advancing
+    // far enough to trigger a SECOND unanswered ping would correctly terminate
+    // — that is the previous test — so stay inside this cycle.
+    await vi.advanceTimersByTimeAsync(1_000);
+    sockets[0].emit('pong');
+    await vi.advanceTimersByTimeAsync(900);
+
+    expect(sockets[0].terminated).toBe(false);
+
+    stream.stop();
+    vi.useRealTimers();
+  });
+
+  it('survives many cycles while the engine keeps answering', async () => {
+    vi.useFakeTimers();
+    const sockets: FakeSocket[] = [];
+    const stream = new AlertStream({
+      url: 'ws://engine/ws',
+      createSocket: () => {
+        const socket = new FakeSocket();
+        sockets.push(socket);
+        return socket;
+      },
+      schedule: () => {},
+      heartbeatMs: 1_000,
+      heartbeatTimeoutMs: 500,
+    });
+    stream.start();
+    sockets[0].emit('open');
+
+    for (let cycle = 0; cycle < 10; cycle++) {
+      await vi.advanceTimersByTimeAsync(1_000);
+      sockets[0].emit('pong');
+    }
+
+    expect(sockets[0].pings).toBe(10);
+    expect(sockets[0].terminated).toBe(false);
+
+    stream.stop();
+    vi.useRealTimers();
+  });
+
+  it('stops pinging once the stream is stopped', async () => {
+    vi.useFakeTimers();
+    const sockets: FakeSocket[] = [];
+    const stream = new AlertStream({
+      url: 'ws://engine/ws',
+      createSocket: () => {
+        const socket = new FakeSocket();
+        sockets.push(socket);
+        return socket;
+      },
+      schedule: () => {},
+      heartbeatMs: 1_000,
+      heartbeatTimeoutMs: 500,
+    });
+    stream.start();
+    sockets[0].emit('open');
+    await vi.advanceTimersByTimeAsync(1_000);
+    const pingsBeforeStop = sockets[0].pings;
+
+    stream.stop();
+    await vi.advanceTimersByTimeAsync(5_000);
+
+    expect(sockets[0].pings).toBe(pingsBeforeStop);
+    vi.useRealTimers();
   });
 });

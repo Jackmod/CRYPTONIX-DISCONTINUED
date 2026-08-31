@@ -80,6 +80,9 @@ export async function startStack(): Promise<E2EStack> {
   const guildConfigs = new GuildConfigCache(engine);
   const posted: { channelId: string; message: unknown }[] = [];
   const streams: AlertStream[] = [];
+  // A test file's afterEach may call close() on a stack a later test never
+  // replaced, and pg throws "Called end on pool more than once".
+  let closed = false;
 
   function startBotAlertPipeline(): AlertStream {
     const stream = new AlertStream({ url: wsUrl, apiKey: API_KEY, initialDelayMs: 20, maxDelayMs: 50 });
@@ -104,9 +107,15 @@ export async function startStack(): Promise<E2EStack> {
     guildConfigs,
     startBotAlertPipeline,
     async close() {
+      if (closed) return;
+      closed = true;
       for (const stream of streams) stream.stop();
       wss.close();
       await new Promise<void>((resolve) => server.close(() => resolve()));
+      // createDb opens a pg.Pool per stack. Every `it` builds a stack, so
+      // without this each one leaks a pool: the vitest worker accumulates open
+      // handles and a long run can exhaust Postgres connections.
+      await (db as unknown as { $client?: { end(): Promise<void> } }).$client?.end();
     },
   };
 }

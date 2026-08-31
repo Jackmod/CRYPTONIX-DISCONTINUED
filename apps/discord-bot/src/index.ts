@@ -50,8 +50,13 @@ client.on(Events.GuildCreate, async (guild) => {
 });
 
 client.on(Events.GuildDelete, (guild) => {
-  // Stop trying to post to a server that removed us.
+  // Stop trying to post to a server that removed us — in the cache AND in the
+  // engine. Clearing only the cache left the row behind, so the next restart
+  // reloaded it and every alert failed fetching a channel we can no longer see.
   guildConfigs.remove(guild.id);
+  engine.deleteGuildConfig(guild.id).catch((err) => {
+    console.error(`could not remove guild ${guild.id} config from the engine`, err);
+  });
 });
 
 const stream = new AlertStream({ url: env.engineWsUrl, apiKey: env.engineApiKey });

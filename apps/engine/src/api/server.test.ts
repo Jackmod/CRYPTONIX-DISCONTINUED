@@ -518,4 +518,39 @@ describe('engine API', () => {
     expect(res.status).toBe(500);
     expect(res.body.error).toBe('internal error');
   });
+
+  it('POST /wallets rejects a non-string label or address', async () => {
+    // [] and {} are truthy and their .length clears the cap (0 and undefined),
+    // so they used to reach the database and render as '' or '[object Object]'
+    // in a Discord embed.
+    const app = buildApp();
+    for (const body of [
+      { address: VALID_ADDRESS, label: [] },
+      { address: VALID_ADDRESS, label: {} },
+      { address: VALID_ADDRESS, label: 123 },
+      { address: [], label: 'X' },
+      { address: {}, label: 'X' },
+    ]) {
+      const res = await api(app).post('/wallets').send(body as any);
+      expect(res.status, `${JSON.stringify(body)} must be rejected`).toBe(400);
+    }
+  });
+
+  it('re-registers and backfills a wallet left holding no webhook', async () => {
+    // This is the half-untracked state: untrack released the webhook, then a
+    // row delete failed. Answering a plain 409 would re-webhook the wallet and
+    // leave it permanently empty, because its trades may already be gone.
+    const { app, helius } = buildAppWithMocks();
+    const created = await api(app).post('/wallets').send({ address: VALID_ADDRESS, label: 'W' });
+    await db.execute(`UPDATE wallets SET helius_webhook_id = NULL WHERE id = ${created.body.id}`);
+    helius.createWalletWebhook.mockClear();
+    helius.getTransactionHistory.mockClear();
+
+    const res = await api(app).post('/wallets').send({ address: VALID_ADDRESS, label: 'W' });
+
+    expect(res.status).toBe(200); // repaired, not created, not a bare conflict
+    expect(helius.createWalletWebhook).toHaveBeenCalledTimes(1);
+    await new Promise((r) => setTimeout(r, 100));
+    expect(helius.getTransactionHistory).toHaveBeenCalled();
+  });
 });

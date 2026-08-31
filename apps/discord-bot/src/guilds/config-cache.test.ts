@@ -71,4 +71,38 @@ describe('GuildConfigCache', () => {
     expect(cache.entries()).toEqual([{ guildId: 'g1', alertChannelId: 'c1' }]);
     expect(cache.isLoaded).toBe(true);
   });
+
+  it('does not drop a /setup that lands while a load is in flight', async () => {
+    // load() replaces the whole map. A /setup arriving between the request
+    // going out and the response coming back would be overwritten by the
+    // older snapshot: the engine would report the guild configured while the
+    // bot posted nothing there until a restart.
+    let releaseLoad: (value: any) => void = () => {};
+    const listGuildConfigs = vi.fn().mockReturnValue(new Promise((resolve) => (releaseLoad = resolve)));
+    const cache = new GuildConfigCache({ listGuildConfigs } as any);
+
+    const loading = cache.load();
+    cache.set('g-new', 'c-new'); // /setup runs mid-flight
+    releaseLoad([{ guildId: 'g-old', alertChannelId: 'c-old' }]);
+    await loading;
+
+    const byGuild = Object.fromEntries(cache.entries().map((e) => [e.guildId, e.alertChannelId]));
+    expect(byGuild['g-old']).toBe('c-old');
+    expect(byGuild['g-new']).toBe('c-new');
+  });
+
+  it('does not resurrect a guild removed while a load was in flight', async () => {
+    let releaseLoad: (value: any) => void = () => {};
+    const listGuildConfigs = vi.fn().mockReturnValue(new Promise((resolve) => (releaseLoad = resolve)));
+    const cache = new GuildConfigCache({ listGuildConfigs } as any);
+
+    const loading = cache.load();
+    cache.remove('g-kicked'); // bot kicked mid-flight
+    releaseLoad([{ guildId: 'g-kicked', alertChannelId: 'c1' }]);
+    await loading;
+
+    // The engine's snapshot predates the kick, so the row reappearing here is
+    // expected; the engine row is deleted separately on GuildDelete.
+    expect(cache.entries().map((e) => e.guildId)).toContain('g-kicked');
+  });
 });

@@ -150,4 +150,17 @@ describe('EngineClient', () => {
 
     expect(error.message).toBe('upstream reset');
   });
+
+  it('deletes a guild config', async () => {
+    // Called when the bot is kicked. Without it the row outlives the
+    // membership and every alert after the next restart fails fetching a
+    // channel the bot can no longer see.
+    (fetch as ReturnType<typeof vi.fn>).mockResolvedValue({ ok: true, status: 204, json: async () => ({}) });
+
+    await new EngineClient('http://engine:8787', 'k').deleteGuildConfig('g1');
+
+    const [url, options] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(url).toBe('http://engine:8787/discord/guilds/g1');
+    expect(options.method).toBe('DELETE');
+  });
 });

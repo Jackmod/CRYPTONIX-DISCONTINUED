@@ -11,6 +11,9 @@ export interface AlertEvent {
 export interface AlertSocket {
   on(event: string, handler: (...args: any[]) => void): void;
   close(): void;
+  /** Optional so a fake socket need not implement the heartbeat. */
+  ping?(): void;
+  terminate?(): void;
 }
 
 export interface AlertStreamOptions {
@@ -25,6 +28,16 @@ export interface AlertStreamOptions {
   schedule?: (fn: () => void, ms: number) => void;
   initialDelayMs?: number;
   maxDelayMs?: number;
+  /**
+   * How often to ping the engine, and how long to wait for a pong.
+   *
+   * A TCP connection can go half-open — a NAT reaping an idle mapping, or the
+   * engine host dying without sending a FIN. The socket then never emits
+   * 'close', so reconnect logic driven only off that event waits forever while
+   * alerts silently stop. Set to 0 to disable.
+   */
+  heartbeatMs?: number;
+  heartbeatTimeoutMs?: number;
 }
 
 function isAlertEvent(value: unknown): value is AlertEvent {
@@ -46,6 +59,10 @@ export class AlertStream {
   private socket: AlertSocket | null = null;
   private delayMs: number;
   private stopped = false;
+  private readonly heartbeatMs: number;
+  private readonly heartbeatTimeoutMs: number;
+  private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+  private pongTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(private options: AlertStreamOptions) {
     this.createSocket =
@@ -57,6 +74,8 @@ export class AlertStream {
     this.schedule = options.schedule ?? ((fn, ms) => { setTimeout(fn, ms); });
     this.initialDelayMs = options.initialDelayMs ?? 1_000;
     this.maxDelayMs = options.maxDelayMs ?? 30_000;
+    this.heartbeatMs = options.heartbeatMs ?? 30_000;
+    this.heartbeatTimeoutMs = options.heartbeatTimeoutMs ?? 10_000;
     this.delayMs = this.initialDelayMs;
   }
 
@@ -71,8 +90,51 @@ export class AlertStream {
 
   stop() {
     this.stopped = true;
+    this.stopHeartbeat();
     this.socket?.close();
     this.socket = null;
+  }
+
+  /**
+   * Pings the engine periodically and tears the socket down if no pong comes
+   * back.
+   *
+   * A TCP connection can go half-open — a NAT reaping an idle mapping, or the
+   * engine host dying without a FIN. The socket emits no 'close' in that case,
+   * so reconnect logic driven only off 'close' waits forever while alerts stop
+   * arriving, with nothing in the logs. Terminating on a missed pong turns
+   * that silence into a 'close', which the existing backoff already handles.
+   */
+  private startHeartbeat(socket: AlertSocket) {
+    this.stopHeartbeat();
+    if (this.heartbeatMs <= 0 || typeof socket.ping !== 'function') return;
+
+    this.heartbeatTimer = setInterval(() => {
+      if (this.pongTimer) return; // a check is already outstanding
+      try {
+        socket.ping?.();
+      } catch {
+        // socket already dead; the close handler will deal with it
+        return;
+      }
+      this.pongTimer = setTimeout(() => {
+        console.error('alert stream: no pong from the engine; reconnecting');
+        this.pongTimer = null;
+        // terminate() forces a 'close', which drives the normal backoff path.
+        try {
+          socket.terminate?.() ?? socket.close();
+        } catch {
+          // already gone
+        }
+      }, this.heartbeatTimeoutMs);
+    }, this.heartbeatMs);
+  }
+
+  private stopHeartbeat() {
+    if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
+    if (this.pongTimer) clearTimeout(this.pongTimer);
+    this.heartbeatTimer = null;
+    this.pongTimer = null;
   }
 
   private connect() {
@@ -83,6 +145,13 @@ export class AlertStream {
     // bot that blips once would then wait the full capped delay to come back.
     socket.on('open', () => {
       this.delayMs = this.initialDelayMs;
+      this.startHeartbeat(socket);
+    });
+
+    socket.on('pong', () => {
+      // Still alive; cancel the pending "no answer" timeout.
+      if (this.pongTimer) clearTimeout(this.pongTimer);
+      this.pongTimer = null;
     });
 
     socket.on('message', (data: unknown) => {
@@ -104,6 +173,7 @@ export class AlertStream {
     });
 
     socket.on('close', () => {
+      this.stopHeartbeat();
       if (this.stopped) return;
       const delay = this.delayMs;
       this.delayMs = Math.min(this.delayMs * 2, this.maxDelayMs);

@@ -32,7 +32,7 @@ export class WalletMonitor {
     // plenty for a window this narrow, and it cannot spin.
     for (let attempt = 0; attempt < 2; attempt++) {
       const [existing] = await this.db.select().from(wallets).where(eq(wallets.address, address));
-      if (existing?.heliusWebhookId) return { wallet: existing, created: false };
+      if (existing?.heliusWebhookId) return { wallet: existing, created: false, healed: false };
 
       if (existing) {
         // Tracked, but holding no webhook: either untrackWallet released the
@@ -65,7 +65,12 @@ export class WalletMonitor {
         }
 
         console.warn(`wallet ${existing.id} had no Helius webhook; re-registered as ${healedWebhookId}`);
-        return { wallet: healed, created: false };
+        // `healed` matters to the caller: this row reached us mid-repair, most
+        // likely from an untrack that released the webhook and then failed to
+        // delete the rows. Its trade history may be partly gone, and only a
+        // backfill puts it back — answering a plain 409 would re-webhook the
+        // wallet and leave it permanently empty.
+        return { wallet: healed, created: false, healed: true };
       }
 
       const webhookId = await this.helius.createWalletWebhook(address);
@@ -84,13 +89,13 @@ export class WalletMonitor {
         throw err;
       }
 
-      if (inserted) return { wallet: inserted, created: true };
+      if (inserted) return { wallet: inserted, created: true, healed: false };
 
       // ON CONFLICT: a concurrent request won. Give our webhook back.
       await this.releaseWebhook(webhookId);
 
       const [raced] = await this.db.select().from(wallets).where(eq(wallets.address, address));
-      if (raced) return { wallet: raced, created: false };
+      if (raced) return { wallet: raced, created: false, healed: false };
       // The winner untracked between our INSERT and this SELECT, so the
       // address is free again — loop and register it properly.
     }
