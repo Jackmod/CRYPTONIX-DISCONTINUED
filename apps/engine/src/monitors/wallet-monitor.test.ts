@@ -31,7 +31,7 @@ describe('WalletMonitor', () => {
     const helius = fakeHelius('wh_42');
     const monitor = new WalletMonitor(db, helius, new AlertBus());
 
-    const wallet = await monitor.trackWallet('Addr1', 'My Wallet', true);
+    const { wallet } = await monitor.trackWallet('Addr1', 'My Wallet', true);
 
     expect(helius.createWalletWebhook).toHaveBeenCalledWith('Addr1');
     expect(wallet.address).toBe('Addr1');
@@ -45,7 +45,7 @@ describe('WalletMonitor', () => {
     const published: unknown[] = [];
     alertBus.on('alert', (a) => published.push(a));
     const monitor = new WalletMonitor(db, helius, alertBus);
-    const wallet = await monitor.trackWallet('Addr1', 'My Wallet', true);
+    const { wallet } = await monitor.trackWallet('Addr1', 'My Wallet', true);
 
     await monitor.handleWebhookPayload([
       swapTx({

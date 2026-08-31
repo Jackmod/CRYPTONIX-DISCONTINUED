@@ -142,9 +142,17 @@ export function createServer(
       res.status(400).json({ error: `label must be ${MAX_LABEL_LENGTH} characters or fewer` });
       return;
     }
-    const wallet = await walletMonitor.trackWallet(address, label, Boolean(isMine));
+    const { wallet, created } = await walletMonitor.trackWallet(address, label, Boolean(isMine));
+    if (!created) {
+      // Already tracked. 409 with the existing row lets the caller say so
+      // plainly instead of surfacing a constraint violation as a 500.
+      res.status(409).json({ error: 'wallet is already tracked', wallet });
+      return;
+    }
     res.status(201).json(wallet);
 
+    // Only a genuinely new wallet needs a backfill; re-running it for an
+    // existing one would burn Helius quota to re-fetch rows we already have.
     pnlTracker.backfillWallet(wallet.id, wallet.address).catch((err) => {
       console.error(`pnl backfill failed for wallet ${wallet.id}`, err);
     });

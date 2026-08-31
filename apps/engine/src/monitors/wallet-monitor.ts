@@ -12,13 +12,41 @@ export class WalletMonitor {
     private alertBus: AlertBus
   ) {}
 
+  /**
+   * Registers a wallet, or returns the one already tracking that address.
+   *
+   * `created` tells the caller which happened, so the API can answer 409
+   * rather than a bare 500 and the bot can say "already tracking".
+   *
+   * The ordering here is load-bearing. wallets.address is UNIQUE, and the
+   * webhook is registered with Helius before any row is written. Creating the
+   * webhook first and letting the insert fail on the constraint left a live
+   * webhook that no row referenced — an orphan consuming one of the free
+   * tier's address slots forever, with nothing recording what held it. So:
+   * look first, and if we still lose a race, hand the webhook straight back.
+   */
   async trackWallet(address: string, label: string, isMine: boolean) {
+    const [existing] = await this.db.select().from(wallets).where(eq(wallets.address, address));
+    if (existing) return { wallet: existing, created: false };
+
     const webhookId = await this.helius.createWalletWebhook(address);
     const [wallet] = await this.db
       .insert(wallets)
       .values({ address, label, isMine, heliusWebhookId: webhookId })
+      .onConflictDoNothing()
       .returning();
-    return wallet;
+
+    if (!wallet) {
+      // A concurrent request won the race between our SELECT and INSERT.
+      // Give the webhook we just created back rather than orphaning it.
+      await this.helius.deleteWalletWebhook(webhookId).catch((err) => {
+        console.error(`could not release orphaned webhook ${webhookId}`, err);
+      });
+      const [raced] = await this.db.select().from(wallets).where(eq(wallets.address, address));
+      return { wallet: raced, created: false };
+    }
+
+    return { wallet, created: true };
   }
 
   /**

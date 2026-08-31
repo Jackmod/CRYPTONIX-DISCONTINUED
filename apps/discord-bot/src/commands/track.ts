@@ -30,6 +30,13 @@ export const trackCommand: BotCommand = {
         `✅ Tracking **${wallet.label}** (\`${shortAddress(wallet.address)}\`). Historical backfill has started.`
       );
     } catch (err) {
+      // 409 means the engine already tracks this address. That is a normal
+      // outcome of typing the same command twice, not a failure worth an
+      // alarming error message.
+      if ((err as { status?: number }).status === 409) {
+        await interaction.editReply(`ℹ️ \`${shortAddress(address)}\` is already tracked.`);
+        return;
+      }
       await interaction.editReply(describeError(err));
     }
   },

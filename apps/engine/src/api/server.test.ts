@@ -432,4 +432,26 @@ describe('engine API', () => {
     const res = await api(app).post('/wallets').send({ address: VALID_ADDRESS, label: 'x'.repeat(5000) });
     expect(res.status).toBe(400);
   });
+
+  it('POST /wallets answers 409 for an address already tracked', async () => {
+    const app = buildApp();
+    await api(app).post('/wallets').send({ address: VALID_ADDRESS, label: 'First' });
+
+    const res = await api(app).post('/wallets').send({ address: VALID_ADDRESS, label: 'Second' });
+
+    expect(res.status).toBe(409);
+    expect(res.body.wallet.label).toBe('First');
+  });
+
+  it('does not register a second Helius webhook for an address already tracked', async () => {
+    // The insert would fail on the UNIQUE constraint, leaving a live webhook
+    // that no row references: an orphan holding one of the free tier's
+    // address slots forever, with nothing recording what held it.
+    const app = buildApp();
+    await api(app).post('/wallets').send({ address: VALID_ADDRESS, label: 'First' });
+    await api(app).post('/wallets').send({ address: VALID_ADDRESS, label: 'Second' });
+
+    const listRes = await api(app).get('/wallets');
+    expect(listRes.body).toHaveLength(1);
+  });
 });

@@ -316,3 +316,74 @@ describe('alert socket', () => {
     spy.terminate();
   }, 30_000);
 });
+
+describe('resource exhaustion', () => {
+  it('does not leak a Helius webhook when the same address is tracked twice', async () => {
+    // The free tier caps how many addresses may hold a webhook. Creating one
+    // before the insert, then failing on the UNIQUE constraint, left a live
+    // webhook that no row referenced - unfindable and unreleasable.
+    stack = await startStack();
+
+    const first = await fetch(`${stack.baseUrl}/wallets`, {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify({ address: ADDRESSES[0], label: 'First' }),
+    });
+    const second = await fetch(`${stack.baseUrl}/wallets`, {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify({ address: ADDRESSES[0], label: 'Second' }),
+    });
+
+    expect(first.status).toBe(201);
+    expect(second.status).toBe(409);
+    expect(stack.helius.createWalletWebhook).toHaveBeenCalledTimes(1);
+    expect(await stack.engine.listWallets()).toHaveLength(1);
+  }, 30_000);
+
+  it('registers exactly one webhook when the same address is tracked concurrently', async () => {
+    // The SELECT-then-INSERT window is racy by nature; losing that race must
+    // hand the webhook back rather than orphan it.
+    stack = await startStack();
+
+    const responses = await Promise.all(
+      Array.from({ length: 8 }, () =>
+        fetch(`${stack.baseUrl}/wallets`, {
+          method: 'POST',
+          headers: authHeaders(),
+          body: JSON.stringify({ address: ADDRESSES[0], label: 'Racer' }),
+        })
+      )
+    );
+
+    expect(responses.filter((r) => r.status === 201)).toHaveLength(1);
+    expect(await stack.engine.listWallets()).toHaveLength(1);
+
+    // Every webhook created beyond the winner must have been handed back.
+    const created = stack.helius.createWalletWebhook.mock.calls.length;
+    const deleted = stack.helius.deleteWalletWebhook.mock.calls.length;
+    expect(created - deleted).toBe(1);
+  }, 30_000);
+
+  it('does not re-run a backfill for an address already tracked', async () => {
+    // Re-backfilling burns Helius quota re-fetching rows we already hold.
+    stack = await startStack();
+
+    await fetch(`${stack.baseUrl}/wallets`, {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify({ address: ADDRESSES[0], label: 'First' }),
+    });
+    await new Promise((r) => setTimeout(r, 200));
+    const afterFirst = stack.helius.getTransactionHistory.mock.calls.length;
+
+    await fetch(`${stack.baseUrl}/wallets`, {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify({ address: ADDRESSES[0], label: 'Second' }),
+    });
+    await new Promise((r) => setTimeout(r, 200));
+
+    expect(stack.helius.getTransactionHistory.mock.calls.length).toBe(afterFirst);
+  }, 30_000);
+});

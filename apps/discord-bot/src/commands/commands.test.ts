@@ -44,6 +44,18 @@ describe('/track wallet', () => {
     expect(label.length).toBeLessThan(44);
   });
 
+  it('says "already tracked" rather than raising an error on 409', async () => {
+    // Typing the same /track twice is ordinary use, not a failure.
+    const engine = { trackWallet: vi.fn().mockRejectedValue(new EngineError('wallet is already tracked', 409)) } as any;
+    const { interaction, editReply } = fakeInteraction({ address: 'Addr1', label: 'Whale' });
+
+    await trackCommand.execute(interaction, { engine, guildConfigs: {} as any });
+
+    const reply = String(editReply.mock.calls[0][0]);
+    expect(reply).toContain('already tracked');
+    expect(reply).not.toContain('⚠️');
+  });
+
   it('reports an engine outage in plain language', async () => {
     const engine = { trackWallet: vi.fn().mockRejectedValue(new EngineError('engine unreachable', 0)) } as any;
     const { interaction, editReply } = fakeInteraction({ address: 'Addr1', label: 'Whale' });
