@@ -75,4 +75,32 @@ describe('engine API', () => {
     expect(res.status).toBe(200);
     expect(res.body).toEqual([]);
   });
+
+  it('rejects a non-numeric wallet id with 400 instead of hanging the request', async () => {
+    // Regression guard: Number('abc') is NaN, which Postgres rejects with
+    // "invalid input syntax for type integer". Under Express 4 that rejection
+    // escaped as an unhandled rejection — the request hung forever and the
+    // process was killed under Node's default policy.
+    const app = buildApp();
+
+    for (const path of ['/wallets/abc/trades', '/wallets/abc/pnl']) {
+      const res = await request(app).get(path);
+      expect(res.status).toBe(400);
+      expect(res.body.error).toMatch(/positive integer/);
+    }
+  });
+
+  it('returns 500 rather than crashing when a route throws', async () => {
+    const alertBus = new AlertBus();
+    const helius = {
+      createWalletWebhook: vi.fn().mockRejectedValue(new Error('helius is down')),
+      getTransactionHistory: vi.fn().mockResolvedValue([]),
+    } as any;
+    const app = createServer(db, new WalletMonitor(db, helius, alertBus), new PnlTracker(db, helius), alertBus);
+
+    const res = await request(app).post('/wallets').send({ address: 'Addr1', label: 'Test' });
+
+    expect(res.status).toBe(500);
+    expect(res.body.error).toBe('internal error');
+  });
 });
