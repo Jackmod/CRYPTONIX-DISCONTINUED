@@ -144,3 +144,83 @@ describe('GuildConfigCache', () => {
     expect(cache.entries().map((e) => e.guildId)).toContain('g1');
   });
 });
+
+describe('GuildConfigCache: changes made between retry attempts', () => {
+  // loadUntilSuccessful spends most of an outage asleep between attempts,
+  // with no request in flight. A change made in that window is just as
+  // unreflected by the engine's next snapshot as one made mid-request.
+
+  it('does not lose a /setup made between a failed attempt and the next', async () => {
+    const listGuildConfigs = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('engine down'))
+      .mockResolvedValueOnce([]); // engine has not seen the /setup yet
+    const cache = new GuildConfigCache({ listGuildConfigs } as any);
+
+    await cache.load(); // fails, nothing in flight afterwards
+    cache.set('g1', '900000000000000001'); // /setup lands in the gap
+    await cache.load(); // retry succeeds with a snapshot that predates it
+
+    expect(cache.entries()).toEqual([{ guildId: 'g1', alertChannelId: '900000000000000001' }]);
+  });
+
+  it('does not resurrect a guild kicked between attempts', async () => {
+    const listGuildConfigs = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('engine down'))
+      .mockResolvedValueOnce([{ guildId: 'g-kicked', alertChannelId: '900000000000000001' }]);
+    const cache = new GuildConfigCache({ listGuildConfigs } as any);
+
+    await cache.load();
+    cache.remove('g-kicked'); // kicked in the gap
+    await cache.load();
+
+    expect(cache.entries().map((e) => e.guildId)).not.toContain('g-kicked');
+  });
+
+  it('lets a later /setup cancel a tombstone from an earlier attempt', async () => {
+    // Kicked, then re-invited and set up again, all during one outage. The
+    // most recent local intent must win.
+    const listGuildConfigs = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('engine down'))
+      .mockResolvedValueOnce([]);
+    const cache = new GuildConfigCache({ listGuildConfigs } as any);
+
+    const failing = cache.load();
+    cache.remove('g1');
+    await failing;
+    cache.set('g1', '900000000000000002'); // re-added in the gap
+    await cache.load();
+
+    expect(cache.entries()).toEqual([{ guildId: 'g1', alertChannelId: '900000000000000002' }]);
+  });
+
+  it('lets a later kick cancel a write from an earlier attempt', async () => {
+    const listGuildConfigs = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('engine down'))
+      .mockResolvedValueOnce([{ guildId: 'g1', alertChannelId: '900000000000000009' }]);
+    const cache = new GuildConfigCache({ listGuildConfigs } as any);
+
+    const failing = cache.load();
+    cache.set('g1', '900000000000000001');
+    await failing;
+    cache.remove('g1'); // kicked in the gap
+    await cache.load();
+
+    expect(cache.entries().map((e) => e.guildId)).not.toContain('g1');
+  });
+
+  it('applies the most recent of several changes to the same guild', async () => {
+    const listGuildConfigs = vi.fn().mockResolvedValue([]);
+    const cache = new GuildConfigCache({ listGuildConfigs } as any);
+
+    cache.set('g1', '900000000000000001');
+    cache.set('g1', '900000000000000002');
+    cache.set('g1', '900000000000000003');
+    await cache.load();
+
+    expect(cache.entries()).toEqual([{ guildId: 'g1', alertChannelId: '900000000000000003' }]);
+  });
+});

@@ -9,26 +9,28 @@ import type { EngineClient } from '../engine/client.js';
 export class GuildConfigCache {
   private channels = new Map<string, string>();
   private loadedOnce = false;
+
   /**
-   * Guilds written locally while a load was in flight.
+   * Local changes not yet reflected in an applied engine snapshot.
    *
-   * load() replaces the whole map with the engine's answer. A /setup landing
-   * between the request going out and the response coming back would be
-   * overwritten by that older snapshot — the engine would report the guild
-   * configured while the bot posted nothing there until a restart. These
-   * entries are re-applied on top of whatever the load returns.
-   */
-  private writtenDuringLoad = new Map<string, string>();
-  /**
-   * Guilds removed locally while a load was in flight.
+   * load() replaces the whole map with what the engine returns, which is
+   * necessarily older than anything we did locally since the request went out.
+   * Without these, two things broke: a /setup landing mid-load was overwritten
+   * by the older snapshot (engine says configured, bot posts nothing), and a
+   * guild the bot was kicked from was resurrected and stayed in the routing
+   * table forever, costing one failed channels.fetch per alert.
    *
-   * Re-applying writes alone was not enough: a guild the bot was kicked from
-   * mid-load came back with the engine's older snapshot and stayed in the
-   * routing table for the life of the process, costing one failed
-   * channels.fetch per alert forever.
+   * They are recorded unconditionally, not only while a load is in flight.
+   * loadUntilSuccessful spends most of an outage asleep between attempts with
+   * nothing in flight, and a change made in that window is just as unreflected
+   * as one made during a request — and must equally be able to cancel a
+   * pending entry left over from a failed attempt.
+   *
+   * The two collections are kept disjoint: recording in one clears the other,
+   * so the most recent local intent for a guild is the only one that survives.
    */
-  private removedDuringLoad = new Set<string>();
-  private loadInFlight = false;
+  private pendingWrites = new Map<string, string>();
+  private pendingRemovals = new Set<string>();
 
   constructor(private engine: Pick<EngineClient, 'listGuildConfigs'>) {}
 
@@ -38,22 +40,20 @@ export class GuildConfigCache {
   }
 
   async load(): Promise<boolean> {
-    // Not cleared here: loadUntilSuccessful may already be retrying, and a
-    // change made during an earlier failed attempt is still newer than the
-    // snapshot the next attempt will return. They are only cleared once a
-    // load actually succeeds and has applied them.
-    this.loadInFlight = true;
     try {
       const configs = await this.engine.listGuildConfigs();
       const loaded = new Map(configs.map((config) => [config.guildId, config.alertChannelId]));
+
       // Local changes win: they are newer than this snapshot by construction.
-      for (const guildId of this.removedDuringLoad) loaded.delete(guildId);
-      for (const [guildId, channelId] of this.writtenDuringLoad) loaded.set(guildId, channelId);
+      for (const guildId of this.pendingRemovals) loaded.delete(guildId);
+      for (const [guildId, channelId] of this.pendingWrites) loaded.set(guildId, channelId);
       this.channels = loaded;
       this.loadedOnce = true;
-      // Applied — safe to forget now, and only now.
-      this.writtenDuringLoad.clear();
-      this.removedDuringLoad.clear();
+
+      // Applied — safe to forget now, and only now. Clearing on a failed
+      // attempt instead would drop a change before any snapshot reflected it.
+      this.pendingWrites.clear();
+      this.pendingRemovals.clear();
       return true;
     } catch (err) {
       // Starting with an empty table is recoverable — crashing here would put
@@ -61,8 +61,6 @@ export class GuildConfigCache {
       // must not be permanent: see loadUntilSuccessful.
       console.error('could not load guild configs', err);
       return false;
-    } finally {
-      this.loadInFlight = false;
     }
   }
 
@@ -84,18 +82,14 @@ export class GuildConfigCache {
 
   set(guildId: string, alertChannelId: string) {
     this.channels.set(guildId, alertChannelId);
-    if (this.loadInFlight) {
-      this.writtenDuringLoad.set(guildId, alertChannelId);
-      this.removedDuringLoad.delete(guildId);
-    }
+    this.pendingWrites.set(guildId, alertChannelId);
+    this.pendingRemovals.delete(guildId);
   }
 
   remove(guildId: string) {
     this.channels.delete(guildId);
-    if (this.loadInFlight) {
-      this.removedDuringLoad.add(guildId);
-      this.writtenDuringLoad.delete(guildId);
-    }
+    this.pendingRemovals.add(guildId);
+    this.pendingWrites.delete(guildId);
   }
 
   entries() {
