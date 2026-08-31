@@ -1,0 +1,27 @@
+{
+  "name": "@cryptonix/engine",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "@cryptonix/core": "workspace:*",
+    "@cryptonix/db": "workspace:*",
+    "dotenv": "^16.4.0",
+    "express": "^4.21.0",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@cryptonix/config": "workspace:*",
+    "@types/express": "^5.0.0",
+    "@types/ws": "^8.5.0",
+    "tsx": "^4.19.0",
+    "vitest": "^2.1.0",
+    "typescript": "^5.6.0"
+  }
+}
