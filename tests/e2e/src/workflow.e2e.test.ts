@@ -34,7 +34,7 @@ describe('end-to-end: wallet trade reaches Discord', () => {
     stack.startBotAlertPipeline();
 
     // A server runs /setup, which the bot stores through the engine.
-    await stack.engine.setGuildConfig('111111111111111111', 'channel-a', 'user1');
+    await stack.engine.setGuildConfig('111111111111111111', '900000000000000011', 'user1');
     await stack.guildConfigs.load();
 
     const wallet = await stack.engine.trackWallet(ADDRESSES[0], 'Whale', false);
@@ -51,7 +51,7 @@ describe('end-to-end: wallet trade reaches Discord', () => {
     await waitFor(() => stack.posted.length === 1);
 
     const { channelId, message } = stack.posted[0];
-    expect(channelId).toBe('channel-a');
+    expect(channelId).toBe('900000000000000011');
 
     const payload = message as { embeds: { toJSON(): { title?: string } }[]; components: unknown[] };
     expect(payload.embeds[0].toJSON().title).toContain('Whale');
@@ -62,9 +62,9 @@ describe('end-to-end: wallet trade reaches Discord', () => {
     stack = await startStack();
     stack.startBotAlertPipeline();
 
-    await stack.engine.setGuildConfig('111111111111111111', 'channel-a');
-    await stack.engine.setGuildConfig('222222222222222222', 'channel-b');
-    await stack.engine.setGuildConfig('333333333333333333', 'channel-c');
+    await stack.engine.setGuildConfig('111111111111111111', '900000000000000011');
+    await stack.engine.setGuildConfig('222222222222222222', '900000000000000012');
+    await stack.engine.setGuildConfig('333333333333333333', '900000000000000013');
     await stack.guildConfigs.load();
 
     await stack.engine.trackWallet(ADDRESSES[0], 'Whale', false);
@@ -73,7 +73,7 @@ describe('end-to-end: wallet trade reaches Discord', () => {
     await deliver(stack.baseUrl, [buyTx(ADDRESSES[0], 'fan-sig-1', 'Mint111', 1, 100, 1_787_000_100)]);
 
     await waitFor(() => stack.posted.length === 3);
-    expect(stack.posted.map((p) => p.channelId).sort()).toEqual(['channel-a', 'channel-b', 'channel-c']);
+    expect(stack.posted.map((p) => p.channelId).sort()).toEqual(['900000000000000011', '900000000000000012', '900000000000000013']);
   });
 
   it('delivers nothing to a server that has not run /setup', async () => {
@@ -93,7 +93,7 @@ describe('end-to-end: wallet trade reaches Discord', () => {
     stack = await startStack();
     stack.startBotAlertPipeline();
 
-    await stack.engine.setGuildConfig('111111111111111111', 'old-channel');
+    await stack.engine.setGuildConfig('111111111111111111', '900000000000000021');
     await stack.guildConfigs.load();
     await stack.engine.trackWallet(ADDRESSES[0], 'Whale', false);
     await new Promise((r) => setTimeout(r, 150));
@@ -101,14 +101,14 @@ describe('end-to-end: wallet trade reaches Discord', () => {
     await deliver(stack.baseUrl, [buyTx(ADDRESSES[0], 'move-sig-1', 'Mint111', 1, 100, 1_787_000_300)]);
     await waitFor(() => stack.posted.length === 1);
 
-    await stack.engine.setGuildConfig('111111111111111111', 'new-channel');
-    stack.guildConfigs.set('111111111111111111', 'new-channel');
+    await stack.engine.setGuildConfig('111111111111111111', '900000000000000022');
+    stack.guildConfigs.set('111111111111111111', '900000000000000022');
 
     await deliver(stack.baseUrl, [buyTx(ADDRESSES[0], 'move-sig-2', 'Mint111', 1, 100, 1_787_000_400)]);
     await waitFor(() => stack.posted.length === 2);
 
-    expect(stack.posted[0].channelId).toBe('old-channel');
-    expect(stack.posted[1].channelId).toBe('new-channel');
+    expect(stack.posted[0].channelId).toBe('900000000000000021');
+    expect(stack.posted[1].channelId).toBe('900000000000000022');
   });
 });
 

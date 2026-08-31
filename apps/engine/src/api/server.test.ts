@@ -326,9 +326,9 @@ describe('engine API', () => {
 
     const putRes = await api(app)
       .put('/discord/guilds/111111111111111111')
-      .send({ alertChannelId: 'channel1', setupBy: 'user1' });
+      .send({ alertChannelId: '900000000000000001', setupBy: 'user1' });
     expect(putRes.status).toBe(200);
-    expect(putRes.body.alertChannelId).toBe('channel1');
+    expect(putRes.body.alertChannelId).toBe('900000000000000001');
 
     const listRes = await api(app).get('/discord/guilds');
     expect(listRes.body).toHaveLength(1);
@@ -339,13 +339,13 @@ describe('engine API', () => {
     // Re-running /setup is normal, not an error case.
     const app = buildApp();
 
-    await api(app).put('/discord/guilds/111111111111111111').send({ alertChannelId: 'channel1' });
-    const second = await api(app).put('/discord/guilds/111111111111111111').send({ alertChannelId: 'channel2' });
+    await api(app).put('/discord/guilds/111111111111111111').send({ alertChannelId: '900000000000000001' });
+    const second = await api(app).put('/discord/guilds/111111111111111111').send({ alertChannelId: '900000000000000002' });
 
     expect(second.status).toBe(200);
     const listRes = await api(app).get('/discord/guilds');
     expect(listRes.body).toHaveLength(1);
-    expect(listRes.body[0].alertChannelId).toBe('channel2');
+    expect(listRes.body[0].alertChannelId).toBe('900000000000000002');
   });
 
   it('PUT /discord/guilds/:id without a channel returns 400', async () => {
@@ -356,7 +356,7 @@ describe('engine API', () => {
 
   it('DELETE /discord/guilds/:id removes the config and is idempotent', async () => {
     const app = buildApp();
-    await api(app).put('/discord/guilds/111111111111111111').send({ alertChannelId: 'channel1' });
+    await api(app).put('/discord/guilds/111111111111111111').send({ alertChannelId: '900000000000000001' });
 
     expect((await api(app).delete('/discord/guilds/111111111111111111')).status).toBe(204);
     // Deleting again must still succeed: the bot calls this when it is removed
@@ -371,7 +371,7 @@ describe('engine API', () => {
     // The guild id is a primary key on an unauthenticated route; junk must not
     // reach the table.
     const app = buildApp();
-    const res = await api(app).put('/discord/guilds/not-a-snowflake').send({ alertChannelId: 'c1' });
+    const res = await api(app).put('/discord/guilds/not-a-snowflake').send({ alertChannelId: '900000000000000001' });
     expect(res.status).toBe(400);
   });
 
@@ -394,7 +394,7 @@ describe('engine API', () => {
     // DELETE removes trade rows that live-webhook delivery cannot rebuild.
     const app = buildApp();
     expect((await request(app).delete('/wallets/1')).status).toBe(401);
-    expect((await request(app).put('/discord/guilds/111111111111111111').send({ alertChannelId: 'c1' })).status).toBe(401);
+    expect((await request(app).put('/discord/guilds/111111111111111111').send({ alertChannelId: '900000000000000001' })).status).toBe(401);
   });
 
   it('still accepts a genuine Helius delivery without the API key', async () => {
@@ -552,5 +552,41 @@ describe('engine API', () => {
     expect(helius.createWalletWebhook).toHaveBeenCalledTimes(1);
     await new Promise((r) => setTimeout(r, 100));
     expect(helius.getTransactionHistory).toHaveBeenCalled();
+  });
+
+  it('PUT /discord/guilds rejects a channel id that is not a snowflake', async () => {
+    // This row drives every alert for the guild. A non-string would persist as
+    // '[object Object]' and permanently break fan-out with no obvious cause.
+    const app = buildApp();
+    for (const alertChannelId of ['not-a-snowflake', '', 123, {}, [], null]) {
+      const res = await api(app)
+        .put('/discord/guilds/111111111111111111')
+        .send({ alertChannelId } as any);
+      expect(res.status, `${JSON.stringify(alertChannelId)} must be rejected`).toBe(400);
+    }
+  });
+
+  it('answers malformed JSON with JSON, never an HTML stack trace', async () => {
+    // body-parser used to throw past every handler into Express's default
+    // error page, which renders absolute filesystem paths and pinned
+    // dependency versions -- to unauthenticated callers, on a service that is
+    // publicly reachable by design.
+    const app = buildApp();
+
+    const res = await api(app).post('/wallets').set('Content-Type', 'application/json').send('{bad');
+
+    expect(res.status).toBe(400);
+    expect(res.text).not.toContain('node_modules');
+    expect(res.text).not.toContain('SyntaxError');
+    expect(res.body.error).toBe('request body is not valid JSON');
+  });
+
+  it('rejects an unauthenticated malformed body before it is ever parsed', async () => {
+    const app = buildApp();
+
+    const res = await request(app).post('/wallets').set('Content-Type', 'application/json').send('{bad');
+
+    expect(res.status).toBe(401);
+    expect(res.text).not.toContain('node_modules');
   });
 });

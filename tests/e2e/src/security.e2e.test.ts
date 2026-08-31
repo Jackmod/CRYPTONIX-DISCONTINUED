@@ -173,7 +173,7 @@ describe('input validation', () => {
       const res = await fetch(`${stack.baseUrl}/discord/guilds/${encodeURIComponent(guildId)}`, {
         method: 'PUT',
         headers: authHeaders(),
-        body: JSON.stringify({ alertChannelId: 'c1' }),
+        body: JSON.stringify({ alertChannelId: '900000000000000001' }),
       });
       expect([400, 404]).toContain(res.status);
     }
@@ -299,7 +299,7 @@ describe('alert socket', () => {
   it('does not deliver alerts to a rejected listener', async () => {
     stack = await startStack();
     stack.startBotAlertPipeline();
-    await stack.engine.setGuildConfig('111111111111111111', 'channel-a');
+    await stack.engine.setGuildConfig('111111111111111111', '900000000000000011');
     await stack.guildConfigs.load();
 
     const eavesdropped: string[] = [];

@@ -19,6 +19,15 @@ export class GuildConfigCache {
    * entries are re-applied on top of whatever the load returns.
    */
   private writtenDuringLoad = new Map<string, string>();
+  /**
+   * Guilds removed locally while a load was in flight.
+   *
+   * Re-applying writes alone was not enough: a guild the bot was kicked from
+   * mid-load came back with the engine's older snapshot and stayed in the
+   * routing table for the life of the process, costing one failed
+   * channels.fetch per alert forever.
+   */
+  private removedDuringLoad = new Set<string>();
   private loadInFlight = false;
 
   constructor(private engine: Pick<EngineClient, 'listGuildConfigs'>) {}
@@ -31,10 +40,12 @@ export class GuildConfigCache {
   async load(): Promise<boolean> {
     this.loadInFlight = true;
     this.writtenDuringLoad.clear();
+    this.removedDuringLoad.clear();
     try {
       const configs = await this.engine.listGuildConfigs();
       const loaded = new Map(configs.map((config) => [config.guildId, config.alertChannelId]));
-      // Local writes win: they are newer than this snapshot by construction.
+      // Local changes win: they are newer than this snapshot by construction.
+      for (const guildId of this.removedDuringLoad) loaded.delete(guildId);
       for (const [guildId, channelId] of this.writtenDuringLoad) loaded.set(guildId, channelId);
       this.channels = loaded;
       this.loadedOnce = true;
@@ -48,6 +59,7 @@ export class GuildConfigCache {
     } finally {
       this.loadInFlight = false;
       this.writtenDuringLoad.clear();
+      this.removedDuringLoad.clear();
     }
   }
 
@@ -69,12 +81,18 @@ export class GuildConfigCache {
 
   set(guildId: string, alertChannelId: string) {
     this.channels.set(guildId, alertChannelId);
-    if (this.loadInFlight) this.writtenDuringLoad.set(guildId, alertChannelId);
+    if (this.loadInFlight) {
+      this.writtenDuringLoad.set(guildId, alertChannelId);
+      this.removedDuringLoad.delete(guildId);
+    }
   }
 
   remove(guildId: string) {
     this.channels.delete(guildId);
-    if (this.loadInFlight) this.writtenDuringLoad.delete(guildId);
+    if (this.loadInFlight) {
+      this.removedDuringLoad.add(guildId);
+      this.writtenDuringLoad.delete(guildId);
+    }
   }
 
   entries() {

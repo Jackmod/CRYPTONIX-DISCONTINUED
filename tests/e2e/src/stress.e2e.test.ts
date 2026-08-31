@@ -109,8 +109,8 @@ describe('stress: sustained delivery', () => {
     stack = await startStack();
     stack.startBotAlertPipeline();
 
-    await stack.engine.setGuildConfig('111111111111111111', 'channel-a');
-    await stack.engine.setGuildConfig('222222222222222222', 'channel-b');
+    await stack.engine.setGuildConfig('111111111111111111', '900000000000000011');
+    await stack.engine.setGuildConfig('222222222222222222', '900000000000000012');
     await stack.guildConfigs.load();
 
     await stack.engine.trackWallet(ADDRESSES[0], 'Whale', false);
@@ -123,8 +123,8 @@ describe('stress: sustained delivery', () => {
 
     // 25 trades x 2 configured servers.
     await waitFor(() => stack.posted.length === 50, 15_000);
-    expect(stack.posted.filter((p) => p.channelId === 'channel-a')).toHaveLength(25);
-    expect(stack.posted.filter((p) => p.channelId === 'channel-b')).toHaveLength(25);
+    expect(stack.posted.filter((p) => p.channelId === '900000000000000011')).toHaveLength(25);
+    expect(stack.posted.filter((p) => p.channelId === '900000000000000012')).toHaveLength(25);
   }, 60_000);
 });
 

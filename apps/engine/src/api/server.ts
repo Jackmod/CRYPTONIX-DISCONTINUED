@@ -113,12 +113,21 @@ export function createServer(
   if (!apiKey) throw new Error('createServer requires a non-empty apiKey');
 
   const app = express();
+
+  // Auth first, parser second. With the parser mounted first, a malformed body
+  // from an UNAUTHENTICATED caller reached body-parser, threw, and fell through
+  // to Express's default error handler — which renders an HTML stack trace
+  // containing absolute filesystem paths and pinned dependency versions. This
+  // engine is publicly reachable by design, so that was handing reconnaissance
+  // to anyone. requireApiKey still calls next() for /webhooks/, so Helius
+  // deliveries are parsed exactly as before.
+  app.use(requireApiKey(apiKey));
+
   // Helius delivers enhanced transactions in batches; a busy wallet's batch
   // comfortably exceeds express.json()'s 100kb default. Rejecting one with 413
   // would make Helius retry the same oversized batch forever and those trades
   // would never land.
   app.use(express.json({ limit: '2mb' }));
-  app.use(requireApiKey(apiKey));
 
   app.get('/wallets', asyncRoute(async (_req, res) => {
     res.json(await db.select().from(wallets));
@@ -248,9 +257,16 @@ export function createServer(
       const guildId = parseGuildId(req, res);
       if (guildId === null) return;
 
-      const { alertChannelId, setupBy } = (req.body ?? {}) as { alertChannelId?: string; setupBy?: string };
-      if (!alertChannelId) {
-        res.status(400).json({ error: 'alertChannelId is required' });
+      const { alertChannelId, setupBy } = (req.body ?? {}) as { alertChannelId?: unknown; setupBy?: unknown };
+      // Same bar as parseGuildId: this row drives every alert for the guild,
+      // and a non-string would persist as '[object Object]', permanently
+      // breaking fan-out for that server with no obvious cause.
+      if (typeof alertChannelId !== 'string' || !/^\d{17,20}$/.test(alertChannelId)) {
+        res.status(400).json({ error: 'alertChannelId must be a Discord snowflake' });
+        return;
+      }
+      if (setupBy !== undefined && typeof setupBy !== 'string') {
+        res.status(400).json({ error: 'setupBy must be a string when provided' });
         return;
       }
 
@@ -309,6 +325,26 @@ export function createServer(
 
     res.status(200).send();
   }));
+
+  // Last line of defence. Anything reaching here — a malformed body from an
+  // authenticated caller, a payload over the size limit — would otherwise hit
+  // Express's default handler, which renders an HTML stack trace with absolute
+  // paths and dependency versions. Answer JSON, and say nothing about internals.
+  app.use((err: Error & { status?: number; type?: string }, _req: Request, res: Response, next: NextFunction) => {
+    if (res.headersSent) return next(err);
+
+    if (err.type === 'entity.too.large') {
+      res.status(413).json({ error: 'request body too large' });
+      return;
+    }
+    if (err.type === 'entity.parse.failed' || err instanceof SyntaxError) {
+      res.status(400).json({ error: 'request body is not valid JSON' });
+      return;
+    }
+
+    console.error('api: unhandled middleware error', err);
+    res.status(err.status && err.status < 500 ? err.status : 500).json({ error: 'internal error' });
+  });
 
   return app;
 }

@@ -101,8 +101,9 @@ describe('GuildConfigCache', () => {
     releaseLoad([{ guildId: 'g-kicked', alertChannelId: 'c1' }]);
     await loading;
 
-    // The engine's snapshot predates the kick, so the row reappearing here is
-    // expected; the engine row is deleted separately on GuildDelete.
-    expect(cache.entries().map((e) => e.guildId)).toContain('g-kicked');
+    // The engine's snapshot predates the kick, so without a tombstone the
+    // guild came back and stayed in the routing table for the life of the
+    // process — one failed channels.fetch per alert, forever.
+    expect(cache.entries().map((e) => e.guildId)).not.toContain('g-kicked');
   });
 });
