@@ -45,6 +45,48 @@ describe('PnlTracker', () => {
     expect(pnlRows[0].tradeCount).toBe(2);
   });
 
+  it('breaks same-second ts ties by id, so a buy/sell recorded in the same second is always matched in insertion order', async () => {
+    // Regression guard: Helius timestamps are unix SECONDS, so same-second
+    // buy/sell pairs are common. Ordering by `ts` alone gives Postgres no
+    // stable tie-break, so a sell can sort before its own buy — spuriously
+    // "unmatched" (no tracked cost basis) instead of realizing its profit.
+    // We force this: the sell is inserted PHYSICALLY FIRST (so a plain scan
+    // ordered only by the tied `ts` tends to return it first) but is given
+    // the LARGER explicit id, while the buy is inserted second but given the
+    // SMALLER id. Only an explicit `.orderBy(ts, id)` tie-break reliably
+    // puts the buy before the sell.
+    const sameTs = new Date('2026-08-30T10:00:00Z');
+    await db.insert(walletTrades).values({
+      id: 2,
+      walletId,
+      signature: 'sell1',
+      mint: 'Mint1',
+      side: 'sell',
+      solAmount: 3,
+      tokenAmount: 1000,
+      ts: sameTs,
+    });
+    await db.insert(walletTrades).values({
+      id: 1,
+      walletId,
+      signature: 'buy1',
+      mint: 'Mint1',
+      side: 'buy',
+      solAmount: 2,
+      tokenAmount: 1000,
+      ts: sameTs,
+    });
+    const tracker = new PnlTracker(db, {} as any);
+
+    await tracker.recomputePnl(walletId);
+
+    const pnlRows = await db.select().from(pnlDaily);
+    expect(pnlRows).toHaveLength(1);
+    // Correct FIFO order (buy before sell) realizes a profit of 1 SOL. If the
+    // sell were processed first, it would find no cost basis and realize 0.
+    expect(pnlRows[0].realizedPnlSol).toBeCloseTo(1);
+  });
+
   it('recomputePnl is idempotent when run twice on the same trades', async () => {
     await db.insert(walletTrades).values([
       { walletId, signature: 'buy1', mint: 'Mint1', side: 'buy', solAmount: 2, tokenAmount: 1000, ts: new Date('2026-08-30T10:00:00Z') },

@@ -44,7 +44,18 @@ export class PnlTracker {
   }
 
   async recomputePnl(walletId: number) {
-    const trades = await this.db.select().from(walletTrades).where(eq(walletTrades.walletId, walletId)).orderBy(walletTrades.ts);
+    // Helius timestamps are unix SECONDS, so same-second buy/sell pairs are
+    // common, and ordering by ts alone gives Postgres no stable tie-break —
+    // a sell could sort before its own buy, producing spurious
+    // unmatchedTokenAmount and understating PnL non-reproducibly between
+    // runs. `id` is insertion order, which for our own inserts (backfill
+    // page-by-page, then live trades as they arrive) matches chronological
+    // order even within the same second.
+    const trades = await this.db
+      .select()
+      .from(walletTrades)
+      .where(eq(walletTrades.walletId, walletId))
+      .orderBy(walletTrades.ts, walletTrades.id);
 
     const lotsByMint = new Map<string, Lot[]>();
     const dailyPnl = new Map<string, { realizedPnlSol: number; tradeCount: number }>();
