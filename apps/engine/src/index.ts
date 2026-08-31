@@ -10,13 +10,17 @@ import { attachWebSocket } from './api/ws.js';
 
 async function main() {
   const db = createDb(env.databaseUrl);
-  const helius = new HeliusClient({ apiKey: env.heliusApiKey, webhookBaseUrl: env.webhookBaseUrl });
+  const helius = new HeliusClient({
+    apiKey: env.heliusApiKey,
+    webhookBaseUrl: env.webhookBaseUrl,
+    webhookSecret: env.webhookSecret,
+  });
   const solanaRpc = new SolanaRpcClient(`https://mainnet.helius-rpc.com/?api-key=${env.heliusApiKey}`);
   const alertBus = new AlertBus();
   const walletMonitor = new WalletMonitor(db, helius, alertBus);
   const pnlTracker = new PnlTracker(db, helius);
 
-  const app = createServer(db, walletMonitor, pnlTracker, alertBus, solanaRpc);
+  const app = createServer(db, walletMonitor, pnlTracker, alertBus, solanaRpc, env.webhookSecret);
   const server = app.listen(env.port, () => {
     console.log(`cryptonix engine listening on :${env.port}`);
   });

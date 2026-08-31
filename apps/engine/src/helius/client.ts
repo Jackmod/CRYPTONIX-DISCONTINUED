@@ -5,6 +5,14 @@ const HELIUS_BASE = 'https://api.helius.xyz/v0';
 export interface HeliusClientConfig {
   apiKey: string;
   webhookBaseUrl: string;
+  /**
+   * Sent to Helius as `authHeader`; Helius echoes it back as the
+   * Authorization header on every webhook delivery to WEBHOOK_BASE_URL,
+   * which is a public URL by design. Without this, anyone can POST a
+   * forged transaction to /webhooks/helius and corrupt realized PnL with
+   * no audit trail.
+   */
+  webhookSecret: string;
 }
 
 export class HeliusClient {
@@ -19,6 +27,7 @@ export class HeliusClient {
         transactionTypes: ['SWAP'],
         accountAddresses: [address],
         webhookType: 'enhanced',
+        authHeader: this.config.webhookSecret,
       }),
     });
     if (!res.ok) throw new Error(`Helius webhook create failed: ${res.status} ${await res.text()}`);

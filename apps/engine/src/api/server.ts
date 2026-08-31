@@ -1,4 +1,5 @@
 import express, { type Express, type Request, type Response } from 'express';
+import { timingSafeEqual } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import type { Db } from '@cryptonix/db';
 import { wallets, walletTrades, pnlDaily } from '@cryptonix/db';
@@ -35,12 +36,29 @@ function parseWalletId(req: Request, res: Response): number | null {
   return walletId;
 }
 
+/**
+ * Constant-time comparison of the incoming Authorization header against the
+ * webhook secret. A plain `===` short-circuits on the first differing byte,
+ * which leaks timing information an attacker can use to guess the secret
+ * character-by-character; timingSafeEqual does not. It throws on
+ * differing-length buffers instead of returning false, so the length check
+ * has to happen first.
+ */
+function isValidWebhookAuth(header: string | undefined, secret: string): boolean {
+  if (!header) return false;
+  const received = Buffer.from(header);
+  const expected = Buffer.from(secret);
+  if (received.length !== expected.length) return false;
+  return timingSafeEqual(received, expected);
+}
+
 export function createServer(
   db: Db,
   walletMonitor: WalletMonitor,
   pnlTracker: PnlTracker,
   _alertBus: AlertBus,
-  solanaRpc: Pick<SolanaRpcClient, 'getBalanceSol'>
+  solanaRpc: Pick<SolanaRpcClient, 'getBalanceSol'>,
+  webhookSecret: string
 ): Express {
   const app = express();
   app.use(express.json());
@@ -91,6 +109,15 @@ export function createServer(
   );
 
   app.post('/webhooks/helius', asyncRoute(async (req, res) => {
+    // WEBHOOK_BASE_URL is a public URL by design, so anyone can find this
+    // endpoint. Helius echoes back the secret we registered (authHeader, see
+    // helius/client.ts) as this header on every real delivery; reject
+    // anything else before it touches the database.
+    if (!isValidWebhookAuth(req.header('authorization'), webhookSecret)) {
+      res.status(401).json({ error: 'invalid webhook authorization' });
+      return;
+    }
+
     const body = req.body as HeliusEnhancedTransaction | HeliusEnhancedTransaction[];
     // handleWebhookPayload now throws on a batch-level failure (e.g. the
     // tracked-wallets fetch) instead of swallowing it, and asyncRoute turns

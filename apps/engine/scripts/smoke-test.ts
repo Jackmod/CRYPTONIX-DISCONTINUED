@@ -26,12 +26,55 @@
  * is configured yet.
  */
 import WebSocket from 'ws';
+import { config } from 'dotenv';
+import { existsSync } from 'node:fs';
+import path from 'node:path';
 import { createDb, wallets } from '@cryptonix/db';
+
+// This script runs standalone via tsx (not through index.ts), so it needs
+// its own .env loading. Mirrors env.ts's walk-up: cwd can be apps/engine
+// (`pnpm --filter @cryptonix/engine exec tsx ...`) or the repo root, but
+// .env always lives at the repo root.
+function loadEnvFile() {
+  let dir = process.cwd();
+  for (let depth = 0; depth < 5; depth++) {
+    const candidate = path.join(dir, '.env');
+    if (existsSync(candidate)) {
+      config({ path: candidate });
+      return;
+    }
+    const parent = path.dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  config(); // nothing found; fall back to dotenv's default behavior
+}
+loadEnvFile();
 
 const PORT = process.env.PORT ?? 8787;
 const BASE = `http://localhost:${PORT}`;
 const SKIP_HELIUS = process.argv.includes('--skip-helius');
 const ALERT_TIMEOUT_MS = 15_000;
+
+// /webhooks/helius now requires this header (see FIX 5: the endpoint is
+// public by design via WEBHOOK_BASE_URL, so it must be authenticated). The
+// running engine reads the same value from .env via env.ts -- read it the
+// same way here so the two never drift apart.
+//
+// This is a function (rather than an inline `if (!x) exit` at module scope)
+// so TypeScript's control-flow narrowing to `string` actually holds where
+// WEBHOOK_SECRET is used below -- narrowing from an early-exit check does
+// not carry across into a later function's closure, only within the same
+// function body.
+function requireWebhookSecret(): string {
+  const value = process.env.WEBHOOK_SECRET;
+  if (!value) {
+    console.error('Missing WEBHOOK_SECRET in the environment -- the running engine needs it too (see .env).');
+    process.exit(1);
+  }
+  return value;
+}
+const WEBHOOK_SECRET = requireWebhookSecret();
 
 function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
   return new Promise((resolve, reject) => {
@@ -106,7 +149,7 @@ async function main() {
   console.log('2. Simulating an incoming Helius webhook (a buy)...');
   await fetch(`${BASE}/webhooks/helius`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', Authorization: WEBHOOK_SECRET },
     body: JSON.stringify([
       {
         signature: 'smoke-sig-1',

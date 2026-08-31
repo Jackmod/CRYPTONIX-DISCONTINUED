@@ -8,6 +8,7 @@ import { AlertBus } from './alert-bus';
 
 const TEST_DB_URL = process.env.TEST_DATABASE_URL ?? 'postgres://postgres:postgres@localhost:5432/cryptonix_test';
 const db = createDb(TEST_DB_URL);
+const WEBHOOK_SECRET = 'test-webhook-secret';
 
 describe('engine API', () => {
   beforeEach(async () => {
@@ -23,7 +24,7 @@ describe('engine API', () => {
     const walletMonitor = new WalletMonitor(db, helius, alertBus);
     const pnlTracker = new PnlTracker(db, helius);
     const solanaRpc = { getBalanceSol: vi.fn().mockResolvedValue(4.2) };
-    return createServer(db, walletMonitor, pnlTracker, alertBus, solanaRpc);
+    return createServer(db, walletMonitor, pnlTracker, alertBus, solanaRpc, WEBHOOK_SECRET);
   }
 
   it('POST /wallets creates a wallet and GET /wallets lists it', async () => {
@@ -51,6 +52,7 @@ describe('engine API', () => {
 
     await request(app)
       .post('/webhooks/helius')
+      .set('Authorization', WEBHOOK_SECRET)
       .send([
         {
           signature: 'sig1',
@@ -67,6 +69,41 @@ describe('engine API', () => {
     expect(tradesRes.body[0].side).toBe('buy');
   });
 
+  it('POST /webhooks/helius with the correct Authorization header succeeds', async () => {
+    const app = buildApp();
+
+    const res = await request(app).post('/webhooks/helius').set('Authorization', WEBHOOK_SECRET).send([]);
+
+    expect(res.status).toBe(200);
+  });
+
+  it('POST /webhooks/helius with a wrong or missing Authorization header returns 401 and writes nothing', async () => {
+    // WEBHOOK_BASE_URL is a public URL by design, so /webhooks/helius must
+    // reject forged deliveries instead of writing them into wallet_trades
+    // and alerts with no audit trail.
+    const app = buildApp();
+    const createRes = await request(app).post('/wallets').send({ address: 'Addr1', label: 'Test' });
+    const walletId = createRes.body.id;
+    const payload = [
+      {
+        signature: 'sig1',
+        timestamp: 1_735_000_000,
+        type: 'SWAP',
+        tokenTransfers: [{ fromUserAccount: 'Pool', toUserAccount: 'Addr1', mint: 'Mint1', tokenAmount: 1000 }],
+        nativeTransfers: [{ fromUserAccount: 'Addr1', toUserAccount: 'Pool', amount: 2_000_000_000 }],
+      },
+    ];
+
+    const wrongRes = await request(app).post('/webhooks/helius').set('Authorization', 'wrong-secret').send(payload);
+    expect(wrongRes.status).toBe(401);
+
+    const missingRes = await request(app).post('/webhooks/helius').send(payload);
+    expect(missingRes.status).toBe(401);
+
+    const tradesRes = await request(app).get(`/wallets/${walletId}/trades`);
+    expect(tradesRes.body).toHaveLength(0);
+  });
+
   it('a live buy and sell delivered via webhook update PnL, not just backfill', async () => {
     // Regression guard: recomputePnl used to only run at the end of
     // backfillWallet. Live trades recorded by handleWebhookPayload never
@@ -79,6 +116,7 @@ describe('engine API', () => {
 
     await request(app)
       .post('/webhooks/helius')
+      .set('Authorization', WEBHOOK_SECRET)
       .send([
         {
           signature: 'buy1',
@@ -91,6 +129,7 @@ describe('engine API', () => {
 
     await request(app)
       .post('/webhooks/helius')
+      .set('Authorization', WEBHOOK_SECRET)
       .send([
         {
           signature: 'sell1',
@@ -120,10 +159,11 @@ describe('engine API', () => {
     const walletMonitor = new WalletMonitor(failingDb, helius, alertBus);
     const pnlTracker = new PnlTracker(db, helius);
     const solanaRpc = { getBalanceSol: vi.fn() };
-    const app = createServer(db, walletMonitor, pnlTracker, alertBus, solanaRpc);
+    const app = createServer(db, walletMonitor, pnlTracker, alertBus, solanaRpc, WEBHOOK_SECRET);
 
     const res = await request(app)
       .post('/webhooks/helius')
+      .set('Authorization', WEBHOOK_SECRET)
       .send([{ signature: 'sig1', timestamp: 1_735_000_000, type: 'SWAP', tokenTransfers: [], nativeTransfers: [] }]);
 
     expect(res.status).not.toBe(200);
@@ -184,7 +224,8 @@ describe('engine API', () => {
       new WalletMonitor(db, helius, alertBus),
       new PnlTracker(db, helius),
       alertBus,
-      solanaRpc
+      solanaRpc,
+      WEBHOOK_SECRET
     );
 
     const res = await request(app).post('/wallets').send({ address: 'Addr1', label: 'Test' });

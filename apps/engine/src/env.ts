@@ -33,5 +33,10 @@ export const env = {
   databaseUrl: required('DATABASE_URL'),
   heliusApiKey: required('HELIUS_API_KEY'),
   webhookBaseUrl: required('WEBHOOK_BASE_URL'),
+  // WEBHOOK_BASE_URL is by design a public URL, so /webhooks/helius must be
+  // authenticated: Helius echoes this secret back as the Authorization header
+  // on every delivery (see helius/client.ts's authHeader), and the route
+  // checks it before writing anything (see api/server.ts).
+  webhookSecret: required('WEBHOOK_SECRET'),
   port: Number(process.env.PORT ?? 8787),
 };
