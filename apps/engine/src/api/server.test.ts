@@ -789,4 +789,63 @@ describe('engine API', () => {
     const app = buildApp();
     expect((await api(app).get('/alerts?since=')).status).toBe(400);
   });
+
+  it('recomputes PnL on a redelivered batch, so a failed recompute is retried', async () => {
+    // The route answers 500 on a recompute failure so Helius redelivers. But
+    // on redelivery every trade hits onConflictDoNothing, so a "new trades
+    // only" result was empty, the recompute was skipped, and the route
+    // answered 200 -- leaving pnl_daily stale and /pnl wrong until some
+    // unrelated future trade arrived.
+    const { app } = buildAppWithMocks();
+    await api(app).post('/wallets').send({ address: VALID_ADDRESS, label: 'W' });
+
+    const batch = [
+      {
+        signature: 'redelivered-sig',
+        timestamp: 1_787_000_000,
+        type: 'SWAP',
+        tokenTransfers: [{ fromUserAccount: 'Pool', toUserAccount: VALID_ADDRESS, mint: 'M', tokenAmount: 100 }],
+        nativeTransfers: [{ fromUserAccount: VALID_ADDRESS, toUserAccount: 'Pool', amount: 1_000_000_000 }],
+      },
+    ];
+
+    const first = await request(app).post('/webhooks/helius').set('Authorization', WEBHOOK_SECRET).send(batch);
+    expect(first.status).toBe(200);
+
+    const wallets = await api(app).get('/wallets');
+    const walletId = wallets.body[0].id;
+
+    // Wipe the derived rows to stand in for a recompute that never ran.
+    await db.execute(`DELETE FROM pnl_daily WHERE wallet_id = ${walletId}`);
+    expect((await api(app).get(`/wallets/${walletId}/pnl`)).body).toHaveLength(0);
+
+    // The redelivery must rebuild them.
+    const second = await request(app).post('/webhooks/helius').set('Authorization', WEBHOOK_SECRET).send(batch);
+    expect(second.status).toBe(200);
+
+    expect((await api(app).get(`/wallets/${walletId}/pnl`)).body.length).toBeGreaterThan(0);
+  });
+
+  it('still records a redelivered trade only once', async () => {
+    // Recomputing on redelivery must not come at the cost of duplicate trades.
+    const app = buildApp();
+    await api(app).post('/wallets').send({ address: VALID_ADDRESS, label: 'W' });
+    const batch = [
+      {
+        signature: 'dupe-guard-sig',
+        timestamp: 1_787_000_000,
+        type: 'SWAP',
+        tokenTransfers: [{ fromUserAccount: 'Pool', toUserAccount: VALID_ADDRESS, mint: 'M', tokenAmount: 100 }],
+        nativeTransfers: [{ fromUserAccount: VALID_ADDRESS, toUserAccount: 'Pool', amount: 1_000_000_000 }],
+      },
+    ];
+
+    await request(app).post('/webhooks/helius').set('Authorization', WEBHOOK_SECRET).send(batch);
+    await request(app).post('/webhooks/helius').set('Authorization', WEBHOOK_SECRET).send(batch);
+    await request(app).post('/webhooks/helius').set('Authorization', WEBHOOK_SECRET).send(batch);
+
+    const wallets = await api(app).get('/wallets');
+    const trades = await api(app).get(`/wallets/${wallets.body[0].id}/trades`);
+    expect(trades.body).toHaveLength(1);
+  });
 });

@@ -42,6 +42,18 @@ export class EngineError extends Error {
 export class EngineClient {
   constructor(private baseUrl: string, private apiKey: string) {}
 
+  /**
+   * For calls whose body we never read.
+   *
+   * An unread response body keeps its undici socket checked out until GC.
+   * HeliusClient works around the same thing explicitly; the cursor save runs
+   * on every advance, so it is squarely on the hot path.
+   */
+  private async requestDiscardingBody(path: string, init?: RequestInit): Promise<void> {
+    const res = await this.request(path, init);
+    await res.body?.cancel().catch(() => {});
+  }
+
   private async request(path: string, init?: RequestInit): Promise<Response> {
     let res: Response;
     try {
@@ -87,7 +99,7 @@ export class EngineClient {
 
   async untrackWallet(id: number): Promise<void> {
     // 204 No Content: there is no body, so do not touch res.json().
-    await this.request(`/wallets/${id}`, { method: 'DELETE' });
+    await this.requestDiscardingBody(`/wallets/${id}`, { method: 'DELETE' });
   }
 
   async getPnl(walletId: number): Promise<DailyPnlRow[]> {
@@ -128,7 +140,7 @@ export class EngineClient {
   }
 
   async setState(key: string, value: string): Promise<void> {
-    await this.request(`/state/${encodeURIComponent(key)}`, {
+    await this.requestDiscardingBody(`/state/${encodeURIComponent(key)}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ value }),
@@ -146,7 +158,7 @@ export class EngineClient {
    * every alert then fails fetching a channel the bot can no longer see.
    */
   async deleteGuildConfig(guildId: string): Promise<void> {
-    await this.request(`/discord/guilds/${guildId}`, { method: 'DELETE' });
+    await this.requestDiscardingBody(`/discord/guilds/${guildId}`, { method: 'DELETE' });
   }
 
   async setGuildConfig(guildId: string, alertChannelId: string, setupBy?: string): Promise<GuildConfig> {

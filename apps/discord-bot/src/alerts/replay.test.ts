@@ -814,3 +814,44 @@ describe('AlertReplay: failures must not swallow a pending reconnect', () => {
     expect(replay.resumeFrom).toBeLessThanOrEqual(150);
   });
 });
+
+describe('AlertReplay: a reconnect during the drain', () => {
+  it('does not let a queued alert step over a backlog from a mid-drain reconnect', async () => {
+    // Confirmed loss mode: backlogClear was computed once BEFORE the drain, so
+    // a reconnect arriving during it left the flag true and a queued alert
+    // advanced the cursor past that reconnect's unfetched ids.
+    let releaseFirst: () => void = () => {};
+    let signalDrainStarted: () => void = () => {};
+    const drainStarted = new Promise<void>((resolve) => (signalDrainStarted = resolve));
+    const stored: AlertEvent[] = [];
+    const posted: number[] = [];
+
+    const replay = new AlertReplay({
+      listAlertsSince: vi.fn(async (since: number) => stored.filter((a) => a.id > since).slice(0, PAGE)),
+      getAlertHead: vi.fn(async () => 100),
+      deliver: vi.fn(async (a: AlertEvent) => {
+        if (a.id === 101) {
+          signalDrainStarted();
+          await new Promise<void>((resolve) => (releaseFirst = resolve));
+        }
+        posted.push(a.id);
+      }),
+      pageSize: PAGE,
+    });
+    await replay.start();
+
+    const walking = replay.catchUp();
+    await replay.handleLive(alert(101)); // queued; its delivery will block
+    await drainStarted;
+
+    // A reconnect lands DURING the drain; 102 and 103 appeared in that gap.
+    await replay.catchUp();
+    stored.push(alert(102), alert(103));
+    await replay.handleLive(alert(104)); // a later live alert, also queued
+
+    releaseFirst();
+    await walking;
+
+    expect([...posted].sort((a, b) => a - b)).toEqual([101, 102, 103, 104]);
+  });
+});

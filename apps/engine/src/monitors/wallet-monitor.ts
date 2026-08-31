@@ -176,9 +176,17 @@ export class WalletMonitor {
   }
 
   /**
-   * Returns the distinct ids of wallets that received a NEW trade row in this
-   * batch (i.e. excludes duplicates and irrelevant transactions), so the
-   * caller knows which wallets' PnL needs recomputing.
+   * Returns the distinct ids of wallets this batch is ABOUT — every wallet a
+   * transaction in it parsed against, whether or not the trade row was new.
+   *
+   * Deliberately not "wallets with new trades". A failed recompute makes the
+   * route answer 500 so Helius redelivers, but on redelivery every trade hits
+   * onConflictDoNothing and looks like a duplicate — so a "new trades only"
+   * result was empty, the recompute was skipped, and the route answered 200.
+   * That wallet's pnl_daily stayed stale, and /pnl showed a wrong heatmap and
+   * a wrong realized total, until some unrelated future trade happened to
+   * arrive. Recomputing for a redelivered batch is cheap and idempotent;
+   * silently serving wrong PnL is not.
    */
   async handleWebhookPayload(transactions: HeliusEnhancedTransaction[]): Promise<number[]> {
     // Fetch the tracked wallets once per batch, not once per transaction.
@@ -189,13 +197,13 @@ export class WalletMonitor {
     // there is no re-backfill path to recover them.
     const trackedWallets = await this.db.select().from(wallets);
 
-    const walletIdsWithNewTrades = new Set<number>();
+    const affectedWalletIds = new Set<number>();
 
     for (const tx of transactions) {
       for (const wallet of trackedWallets) {
         try {
-          const inserted = await this.handleTransactionForWallet(tx, wallet);
-          if (inserted) walletIdsWithNewTrades.add(wallet.id);
+          const touched = await this.handleTransactionForWallet(tx, wallet);
+          if (touched) affectedWalletIds.add(wallet.id);
         } catch (err) {
           // Per-wallet isolation: one wallet's failure must not stop the
           // others in the same batch (spec §9 fault isolation) — this stays
@@ -205,10 +213,18 @@ export class WalletMonitor {
       }
     }
 
-    return [...walletIdsWithNewTrades];
+    return [...affectedWalletIds];
   }
 
-  /** Returns true if a new trade row was inserted (false for a duplicate or irrelevant tx). */
+  /**
+   * Returns true if this transaction concerns this wallet at all — a new trade
+   * row, or one already recorded. False only when the transaction is not a
+   * swap this wallet took part in.
+   *
+   * A duplicate still counts: the caller uses this to decide whose PnL to
+   * recompute, and a redelivery is exactly when a previously failed recompute
+   * needs to run again.
+   */
   private async handleTransactionForWallet(tx: HeliusEnhancedTransaction, wallet: typeof wallets.$inferSelect): Promise<boolean> {
     const parsed = parseSwap(tx, wallet.address);
     if (!parsed) return false;
@@ -226,7 +242,11 @@ export class WalletMonitor {
       })
       .onConflictDoNothing()
       .returning();
-    if (!trade) return false; // duplicate delivery of a signature we already recorded
+    if (!trade) {
+      // A signature already recorded. The wallet is still affected by this
+      // batch, so the caller must recompute it — see handleWebhookPayload.
+      return true;
+    }
 
     const payload = {
       walletId: wallet.id,

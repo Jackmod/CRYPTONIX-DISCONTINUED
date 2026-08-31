@@ -432,13 +432,13 @@ export function createServer(
     // that into a 500 — letting it propagate here (no try/catch) is
     // intentional, so Helius sees a non-2xx and retries the batch instead of
     // considering lost trades "delivered".
-    const walletIdsWithNewTrades = await walletMonitor.handleWebhookPayload(Array.isArray(body) ? body : [body]);
+    const affectedWalletIds = await walletMonitor.handleWebhookPayload(Array.isArray(body) ? body : [body]);
 
     // Recompute PnL for every wallet that got a live trade, and do it BEFORE
     // responding 200: if a recompute throws, we still want Helius to retry
     // the batch (consistent with the batch-failure handling above), rather
     // than reporting success while PnL is left stale.
-    for (const walletId of walletIdsWithNewTrades) {
+    for (const walletId of affectedWalletIds) {
       await pnlTracker.recomputePnl(walletId);
     }
 

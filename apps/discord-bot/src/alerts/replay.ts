@@ -87,6 +87,8 @@ export class AlertReplay {
    */
   private failureCounts = new Map<number, number>();
   private rerunRequested = false;
+  private persistChain: Promise<void> = Promise.resolve();
+  private highestPersistRequested = 0;
   private queued: AlertEvent[] = [];
   private deliveredIds = new Set<number>();
   private readonly maxRememberedIds: number;
@@ -163,6 +165,11 @@ export class AlertReplay {
       // 0 and nothing re-ran, so alerts published during that disconnect were
       // never fetched, and a later live alert moved the cursor past them.
       this.rerunRequested = true;
+      // Cleared HERE, not only where the flag is read. backlogClear was
+      // computed once before the drain, so a reconnect arriving DURING the
+      // drain left it true and a queued alert jumped the cursor over that
+      // reconnect's unfetched backlog — unreachable for good.
+      this.backlogClear = false;
       return 0;
     }
 
@@ -332,12 +339,28 @@ export class AlertReplay {
     if (bound <= this.cursor) return;
 
     this.cursor = bound;
-    // Persisting is best-effort: losing it costs a replay after a restart,
-    // which is recoverable, whereas throwing here would abort a walk that has
-    // already delivered its alerts.
-    void this.options.saveCursor?.(bound).catch((err) => {
-      console.error(`could not persist alert cursor ${bound}`, err);
-    });
+    this.persistCursor(bound);
+  }
+
+  /**
+   * Persists the cursor, in order and never backwards.
+   *
+   * walkBacklog advances once per page without awaiting, so unsequenced saves
+   * could land out of order and leave a LOWER value stored. A restart would
+   * then read the stale one and re-post alerts already delivered, because the
+   * de-duplication set does not survive the process.
+   */
+  private persistCursor(cursor: number) {
+    if (!this.options.saveCursor) return;
+    if (cursor <= this.highestPersistRequested) return;
+    this.highestPersistRequested = cursor;
+
+    // Chained, so two saves cannot be in flight at once. Best-effort: losing a
+    // save costs a replay after a restart, whereas throwing here would abort a
+    // walk that has already delivered its alerts.
+    this.persistChain = this.persistChain
+      .then(() => this.options.saveCursor!(cursor))
+      .catch((err) => console.error(`could not persist alert cursor ${cursor}`, err));
   }
 
   /** Lowest id that must stay fetchable, or null when there is none. */
