@@ -1,8 +1,10 @@
 import type { ChatInputCommandInteraction } from 'discord.js';
 import type { EngineClient } from '../engine/client.js';
+import type { GuildConfigCache } from '../guilds/config-cache.js';
 
 export interface CommandDeps {
   engine: EngineClient;
+  guildConfigs: GuildConfigCache;
 }
 
 export interface BotCommand {

@@ -1,17 +1,16 @@
-import { Client, Events, GatewayIntentBits, MessageFlags } from 'discord.js';
+import { Client, Events, GatewayIntentBits, MessageFlags, PermissionFlagsBits } from 'discord.js';
 import { env } from './env.js';
 import { EngineClient } from './engine/client.js';
 import { AlertStream } from './engine/alert-stream.js';
-import { buildWalletTradeMessage, isWalletAlertPayload } from './embeds/wallet-buy.js';
+import { GuildConfigCache } from './guilds/config-cache.js';
+import { fanOutAlert } from './guilds/fan-out.js';
 import { commands } from './commands/registry.js';
 import { describeError } from './commands/types.js';
 
 const engine = new EngineClient(env.engineHttpUrl);
+const guildConfigs = new GuildConfigCache(engine);
 const commandsByName = new Map(commands.map((command) => [command.data.name, command]));
 
-// Guilds is the only intent needed: slash commands and channel posting do not
-// require any privileged intent, so the bot works without toggling anything
-// extra in the Developer Portal.
 const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 
 client.on(Events.InteractionCreate, async (interaction) => {
@@ -20,7 +19,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
   if (!command) return;
 
   try {
-    await command.execute(interaction, { engine });
+    await command.execute(interaction, { engine, guildConfigs });
   } catch (err) {
     // A handler that throws past its own catch must not take the process down.
     console.error(`command ${interaction.commandName} failed`, err);
@@ -33,32 +32,44 @@ client.on(Events.InteractionCreate, async (interaction) => {
   }
 });
 
+// Joining a server is the moment someone is most likely to be looking. Point
+// them at /setup rather than leaving a silent bot that never posts.
+client.on(Events.GuildCreate, async (guild) => {
+  const me = guild.members.me;
+  const channel = guild.channels.cache.find(
+    (c) => c.isTextBased() && me !== null && c.permissionsFor(me)?.has(PermissionFlagsBits.SendMessages) === true
+  );
+  if (!channel?.isTextBased() || !('send' in channel)) return;
+
+  await channel
+    .send(
+      'Thanks for adding **Cryptonix**. Run `/setup` in the channel you want alerts in — ' +
+        'or `/setup channel:#some-channel` to pick a different one. Then `/track wallet` to start following a wallet.'
+    )
+    .catch(() => {});
+});
+
+client.on(Events.GuildDelete, (guild) => {
+  // Stop trying to post to a server that removed us.
+  guildConfigs.remove(guild.id);
+});
+
 const stream = new AlertStream({ url: env.engineWsUrl });
 
 client.once(Events.ClientReady, async (ready) => {
   console.log(`discord bot ready as ${ready.user.tag}`);
 
-  const channel = await client.channels.fetch(env.alertChannelId);
-  if (!channel?.isTextBased() || !('send' in channel)) {
-    throw new Error(`DISCORD_ALERT_CHANNEL_ID ${env.alertChannelId} is not a text channel the bot can post to`);
-  }
+  await guildConfigs.load();
+  console.log(`loaded alert routing for ${guildConfigs.entries().length} server(s)`);
 
-  stream.onAlert(async (alert) => {
-    // Phase 3 adds tweet and new-coin alerts to this same socket. Anything this
-    // version does not understand is logged and skipped, never rendered.
-    if (alert.type !== 'wallet_buy' && alert.type !== 'wallet_sell') return;
-    if (!isWalletAlertPayload(alert.payload)) {
-      console.error(`alert ${alert.refId} has an unexpected payload shape; skipping`);
-      return;
-    }
-
-    try {
-      await channel.send(buildWalletTradeMessage(alert.payload));
-    } catch (err) {
-      // A Discord outage or a revoked permission must not kill the process —
-      // the engine keeps recording trades either way.
-      console.error('failed to post alert to Discord', err);
-    }
+  stream.onAlert((alert) => {
+    void fanOutAlert(alert, guildConfigs, async (channelId, message) => {
+      const channel = await client.channels.fetch(channelId);
+      if (!channel?.isTextBased() || !('send' in channel)) {
+        throw new Error(`channel ${channelId} is not a text channel the bot can post to`);
+      }
+      await channel.send(message as Parameters<typeof channel.send>[0]);
+    });
   });
 
   stream.start();

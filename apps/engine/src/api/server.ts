@@ -37,6 +37,22 @@ function parseWalletId(req: Request, res: Response): number | null {
 }
 
 /**
+ * Discord snowflakes are 17-20 digit decimal strings. Express types a route
+ * param as `string | string[]` (a repeated param arrives as an array), so this
+ * both narrows the type and keeps junk out of discord_guilds — the id is a
+ * primary key, and anything that reaches this route can write one.
+ */
+function parseGuildId(req: Request, res: Response): string | null {
+  const raw = req.params.guildId;
+  const guildId = typeof raw === 'string' ? raw : '';
+  if (!/^\d{17,20}$/.test(guildId)) {
+    res.status(400).json({ error: 'guild id must be a Discord snowflake' });
+    return null;
+  }
+  return guildId;
+}
+
+/**
  * Constant-time comparison of the incoming Authorization header against the
  * webhook secret. A plain `===` short-circuits on the first differing byte,
  * which leaks timing information an attacker can use to guess the secret
@@ -132,6 +148,9 @@ export function createServer(
   app.put(
     '/discord/guilds/:guildId',
     asyncRoute(async (req, res) => {
+      const guildId = parseGuildId(req, res);
+      if (guildId === null) return;
+
       const { alertChannelId, setupBy } = (req.body ?? {}) as { alertChannelId?: string; setupBy?: string };
       if (!alertChannelId) {
         res.status(400).json({ error: 'alertChannelId is required' });
@@ -142,7 +161,7 @@ export function createServer(
       // expected use, not a conflict.
       const [row] = await db
         .insert(discordGuilds)
-        .values({ guildId: req.params.guildId, alertChannelId, setupBy })
+        .values({ guildId, alertChannelId, setupBy })
         .onConflictDoUpdate({
           target: discordGuilds.guildId,
           set: { alertChannelId, setupBy, setupAt: new Date() },
@@ -155,9 +174,12 @@ export function createServer(
   app.delete(
     '/discord/guilds/:guildId',
     asyncRoute(async (req, res) => {
+      const guildId = parseGuildId(req, res);
+      if (guildId === null) return;
+
       // Idempotent on purpose: the bot calls this when kicked from a server,
       // and Discord may deliver that event more than once.
-      await db.delete(discordGuilds).where(eq(discordGuilds.guildId, req.params.guildId));
+      await db.delete(discordGuilds).where(eq(discordGuilds.guildId, guildId));
       res.status(204).end();
     })
   );

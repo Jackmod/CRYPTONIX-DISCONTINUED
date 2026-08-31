@@ -285,22 +285,22 @@ describe('engine API', () => {
     const app = buildApp();
 
     const putRes = await request(app)
-      .put('/discord/guilds/guild1')
+      .put('/discord/guilds/111111111111111111')
       .send({ alertChannelId: 'channel1', setupBy: 'user1' });
     expect(putRes.status).toBe(200);
     expect(putRes.body.alertChannelId).toBe('channel1');
 
     const listRes = await request(app).get('/discord/guilds');
     expect(listRes.body).toHaveLength(1);
-    expect(listRes.body[0].guildId).toBe('guild1');
+    expect(listRes.body[0].guildId).toBe('111111111111111111');
   });
 
   it('PUT /discord/guilds/:id twice moves the channel instead of erroring', async () => {
     // Re-running /setup is normal, not an error case.
     const app = buildApp();
 
-    await request(app).put('/discord/guilds/guild1').send({ alertChannelId: 'channel1' });
-    const second = await request(app).put('/discord/guilds/guild1').send({ alertChannelId: 'channel2' });
+    await request(app).put('/discord/guilds/111111111111111111').send({ alertChannelId: 'channel1' });
+    const second = await request(app).put('/discord/guilds/111111111111111111').send({ alertChannelId: 'channel2' });
 
     expect(second.status).toBe(200);
     const listRes = await request(app).get('/discord/guilds');
@@ -310,20 +310,28 @@ describe('engine API', () => {
 
   it('PUT /discord/guilds/:id without a channel returns 400', async () => {
     const app = buildApp();
-    const res = await request(app).put('/discord/guilds/guild1').send({});
+    const res = await request(app).put('/discord/guilds/111111111111111111').send({});
     expect(res.status).toBe(400);
   });
 
   it('DELETE /discord/guilds/:id removes the config and is idempotent', async () => {
     const app = buildApp();
-    await request(app).put('/discord/guilds/guild1').send({ alertChannelId: 'channel1' });
+    await request(app).put('/discord/guilds/111111111111111111').send({ alertChannelId: 'channel1' });
 
-    expect((await request(app).delete('/discord/guilds/guild1')).status).toBe(204);
+    expect((await request(app).delete('/discord/guilds/111111111111111111')).status).toBe(204);
     // Deleting again must still succeed: the bot calls this when it is removed
     // from a server, and Discord can deliver that event more than once.
-    expect((await request(app).delete('/discord/guilds/guild1')).status).toBe(204);
+    expect((await request(app).delete('/discord/guilds/111111111111111111')).status).toBe(204);
 
     const listRes = await request(app).get('/discord/guilds');
     expect(listRes.body).toHaveLength(0);
+  });
+
+  it('PUT /discord/guilds/:id rejects an id that is not a Discord snowflake', async () => {
+    // The guild id is a primary key on an unauthenticated route; junk must not
+    // reach the table.
+    const app = buildApp();
+    const res = await request(app).put('/discord/guilds/not-a-snowflake').send({ alertChannelId: 'c1' });
+    expect(res.status).toBe(400);
   });
 });
