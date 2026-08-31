@@ -9,3 +9,4 @@ export { GuildConfigCache } from './guilds/config-cache.js';
 export { fanOutAlert } from './guilds/fan-out.js';
 export { buildWalletTradeMessage, isWalletAlertPayload } from './embeds/wallet-buy.js';
 export { buildPnlEmbed } from './embeds/pnl.js';
+export { AlertReplay } from './alerts/replay.js';
