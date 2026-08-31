@@ -108,6 +108,20 @@ export function createServer(
     })
   );
 
+  app.delete(
+    '/wallets/:id',
+    asyncRoute(async (req, res) => {
+      const walletId = parseWalletId(req, res);
+      if (walletId === null) return;
+      const removed = await walletMonitor.untrackWallet(walletId);
+      if (!removed) {
+        res.status(404).json({ error: 'wallet not found' });
+        return;
+      }
+      res.status(204).end();
+    })
+  );
+
   app.post('/webhooks/helius', asyncRoute(async (req, res) => {
     // WEBHOOK_BASE_URL is a public URL by design, so anyone can find this
     // endpoint. Helius echoes back the secret we registered (authHeader, see

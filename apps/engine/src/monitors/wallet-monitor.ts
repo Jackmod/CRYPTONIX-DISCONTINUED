@@ -1,11 +1,16 @@
 import type { Db } from '@cryptonix/db';
-import { wallets, walletTrades, alerts } from '@cryptonix/db';
+import { wallets, walletTrades, pnlDaily, alerts } from '@cryptonix/db';
+import { eq } from 'drizzle-orm';
 import { parseSwap, buildAxiomLink, type HeliusEnhancedTransaction } from '@cryptonix/core';
 import type { HeliusClient } from '../helius/client.js';
 import type { AlertBus } from '../api/alert-bus.js';
 
 export class WalletMonitor {
-  constructor(private db: Db, private helius: Pick<HeliusClient, 'createWalletWebhook'>, private alertBus: AlertBus) {}
+  constructor(
+    private db: Db,
+    private helius: Pick<HeliusClient, 'createWalletWebhook' | 'deleteWalletWebhook'>,
+    private alertBus: AlertBus
+  ) {}
 
   async trackWallet(address: string, label: string, isMine: boolean) {
     const webhookId = await this.helius.createWalletWebhook(address);
@@ -14,6 +19,31 @@ export class WalletMonitor {
       .values({ address, label, isMine, heliusWebhookId: webhookId })
       .returning();
     return wallet;
+  }
+
+  /**
+   * Removes a wallet and everything hanging off it. Returns false if there was
+   * no such wallet, so the route can answer 404 rather than pretending.
+   *
+   * The Helius webhook goes first and on purpose: if Helius refuses (anything
+   * but a 404), this throws and the wallet row survives, so the user can retry.
+   * The alternative — dropping the row anyway — leaves an orphaned webhook
+   * firing at /webhooks/helius forever against a wallet we can no longer
+   * identify, permanently consuming one of the free tier's address slots.
+   */
+  async untrackWallet(walletId: number): Promise<boolean> {
+    const [wallet] = await this.db.select().from(wallets).where(eq(wallets.id, walletId));
+    if (!wallet) return false;
+
+    if (wallet.heliusWebhookId) {
+      await this.helius.deleteWalletWebhook(wallet.heliusWebhookId);
+    }
+
+    // Children before parent: both tables carry a FK onto wallets.id.
+    await this.db.delete(pnlDaily).where(eq(pnlDaily.walletId, walletId));
+    await this.db.delete(walletTrades).where(eq(walletTrades.walletId, walletId));
+    await this.db.delete(wallets).where(eq(wallets.id, walletId));
+    return true;
   }
 
   /**

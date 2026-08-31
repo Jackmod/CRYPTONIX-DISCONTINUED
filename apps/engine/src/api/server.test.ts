@@ -19,6 +19,7 @@ describe('engine API', () => {
     const helius = {
       createWalletWebhook: vi.fn().mockResolvedValue('wh_1'),
       getTransactionHistory: vi.fn().mockResolvedValue([]),
+      deleteWalletWebhook: vi.fn().mockResolvedValue(undefined),
     } as any;
     const alertBus = new AlertBus();
     const walletMonitor = new WalletMonitor(db, helius, alertBus);
@@ -232,5 +233,51 @@ describe('engine API', () => {
 
     expect(res.status).toBe(500);
     expect(res.body.error).toBe('internal error');
+  });
+
+  it('DELETE /wallets/:id removes the wallet and releases its Helius webhook', async () => {
+    const app = buildApp();
+    const createRes = await request(app).post('/wallets').send({ address: 'Addr1', label: 'Test' });
+    const walletId = createRes.body.id;
+
+    const delRes = await request(app).delete(`/wallets/${walletId}`);
+    expect(delRes.status).toBe(204);
+
+    const listRes = await request(app).get('/wallets');
+    expect(listRes.body).toHaveLength(0);
+  });
+
+  it('DELETE /wallets/:id removes a wallet that has trades and PnL rows', async () => {
+    // wallet_trades and pnl_daily both carry a foreign key onto wallets.id, so
+    // deleting the parent row first is a FK violation. This is the regression
+    // guard: a wallet is only untrackable in practice once it has history.
+    const app = buildApp();
+    const createRes = await request(app).post('/wallets').send({ address: 'Addr1', label: 'Test' });
+    const walletId = createRes.body.id;
+
+    await request(app)
+      .post('/webhooks/helius')
+      .set('Authorization', WEBHOOK_SECRET)
+      .send([
+        {
+          signature: 'sig1',
+          timestamp: 1_735_000_000,
+          type: 'SWAP',
+          tokenTransfers: [{ fromUserAccount: 'Pool', toUserAccount: 'Addr1', mint: 'Mint1', tokenAmount: 100 }],
+          nativeTransfers: [{ fromUserAccount: 'Addr1', toUserAccount: 'Pool', amount: 1_000_000_000 }],
+        },
+      ]);
+
+    const tradesRes = await request(app).get(`/wallets/${walletId}/trades`);
+    expect(tradesRes.body.length).toBeGreaterThan(0);
+
+    const delRes = await request(app).delete(`/wallets/${walletId}`);
+    expect(delRes.status).toBe(204);
+  });
+
+  it('DELETE /wallets/:id returns 404 for an unknown wallet', async () => {
+    const app = buildApp();
+    const res = await request(app).delete('/wallets/9999');
+    expect(res.status).toBe(404);
   });
 });
