@@ -50,3 +50,36 @@ describe('buildWalletTradeMessage', () => {
     expect(sell.title).toContain('Sell');
   });
 });
+
+describe('buildWalletTradeMessage: unrenderable payloads', () => {
+  it('clamps a title Discord would reject', () => {
+    // An alert that cannot be rendered can never be delivered, however many
+    // times it is retried, so it must not be possible to build one.
+    const { embeds } = buildWalletTradeMessage({ ...payload, walletLabel: 'x'.repeat(500) });
+
+    expect(embeds[0].toJSON().title!.length).toBeLessThanOrEqual(256);
+  });
+
+  it('posts without the button rather than throwing on a bad link', () => {
+    for (const axiomLink of ['not a url', 'javascript:alert(1)', '', 'ftp://example.com/x']) {
+      const message = buildWalletTradeMessage({ ...payload, axiomLink });
+      expect(message.components, `link ${axiomLink}`).toHaveLength(0);
+      expect(message.embeds).toHaveLength(1);
+    }
+  });
+
+  it('never throws on any payload the type guard accepts', () => {
+    const hostile = [
+      { ...payload, walletLabel: 'y'.repeat(5000) },
+      { ...payload, mint: '' },
+      { ...payload, axiomLink: 'nope' },
+      { ...payload, tokenAmount: Number.MAX_SAFE_INTEGER },
+      { ...payload, solAmount: -0 },
+    ];
+
+    for (const p of hostile) {
+      expect(isWalletAlertPayload(p), JSON.stringify(p).slice(0, 40)).toBe(true);
+      expect(() => buildWalletTradeMessage(p)).not.toThrow();
+    }
+  });
+});

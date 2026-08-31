@@ -97,7 +97,17 @@ describe('AlertReplay: pagination', () => {
 
   it('stops if a page makes no forward progress', async () => {
     // A misbehaving engine returning the same rows must not spin the loop.
-    const stuck = vi.fn(async () => [alert(1)]);
+    // The page must be EXACTLY pageSize, or the walk exits through the
+    // short-page break and never reaches the guard this test is about --
+    // deleting the guard would then leave the suite green.
+    const samePageForever = Array.from({ length: PAGE }, (_, i) => alert(i + 1));
+    let calls = 0;
+    const stuck = vi.fn(async () => {
+      // Fail loudly rather than looping forever: without the bound, removing
+      // the guard hangs the worker instead of failing this test.
+      if (++calls > 10) throw new Error('catchUp did not stop on a page that made no progress');
+      return samePageForever;
+    });
     const replay = new AlertReplay({
       listAlertsSince: stuck,
       getAlertHead: vi.fn(async () => 0),
@@ -108,7 +118,8 @@ describe('AlertReplay: pagination', () => {
 
     await replay.catchUp();
 
-    expect(stuck.mock.calls.length).toBeLessThan(5);
+    // Two calls: one that advances the cursor to 5, one that cannot beat it.
+    expect(stuck).toHaveBeenCalledTimes(2);
   });
 });
 
@@ -181,28 +192,72 @@ describe('AlertReplay: live and catch-up together', () => {
     expect(replay.resumeFrom).toBe(4);
   });
 
-  it('leaves an alert eligible for retry when delivery throws', async () => {
+  it('skips one undeliverable alert and keeps posting the rest', async () => {
+    // Aborting the walk on a single failure was worse than skipping: the
+    // cursor never passed the bad alert, so every later reconnect refetched
+    // the same page, died on the same alert, and nothing behind it ever
+    // arrived.
     const posted: number[] = [];
-    let failNext = true;
+    const stored = [alert(1), alert(2), alert(3)];
     const replay = new AlertReplay({
-      listAlertsSince: vi.fn(async (since: number) => (since < 1 ? [alert(1)] : [])),
+      listAlertsSince: vi.fn(async (since: number) => stored.filter((a) => a.id > since).slice(0, PAGE)),
       getAlertHead: vi.fn(async () => 0),
       deliver: vi.fn(async (a: AlertEvent) => {
-        if (failNext) {
-          failNext = false;
-          throw new Error('discord is down');
-        }
+        if (a.id === 2) throw new Error('unrenderable payload');
         posted.push(a.id);
       }),
       pageSize: PAGE,
     });
     await replay.start();
 
-    await expect(replay.catchUp()).rejects.toThrow('discord is down');
-    expect(posted).toEqual([]);
+    await expect(replay.catchUp()).resolves.toBe(2);
 
-    await replay.catchUp(); // the id was never marked delivered
-    expect(posted).toEqual([1]);
+    expect(posted).toEqual([1, 3]);
+    expect(replay.resumeFrom).toBe(3); // the walk moved past the bad alert
+  });
+
+  it('still drains queued live alerts when the walk itself throws', async () => {
+    // The drain used to sit outside the try, so a failing listAlertsSince
+    // stranded everything queued behind it until some future clean catch-up.
+    const posted: number[] = [];
+    const replay = new AlertReplay({
+      listAlertsSince: vi.fn(async () => {
+        throw new Error('engine died mid-walk');
+      }),
+      getAlertHead: vi.fn(async () => 0),
+      deliver: vi.fn(async (a: AlertEvent) => {
+        posted.push(a.id);
+      }),
+      pageSize: PAGE,
+    });
+    await replay.start();
+
+    const walking = replay.catchUp();
+    await replay.handleLive(alert(9));
+    await expect(walking).rejects.toThrow('engine died mid-walk');
+
+    expect(posted).toEqual([9]);
+  });
+
+  it('does not let a live alert jump the cursor after an aborted walk', async () => {
+    // Mid-walk is covered above; this is the window after the walk has died,
+    // when ids below the failure point are still unfetched.
+    const replay = new AlertReplay({
+      listAlertsSince: vi.fn(async () => {
+        throw new Error('engine died mid-walk');
+      }),
+      getAlertHead: vi.fn(async () => 50),
+      deliver: vi.fn(async () => {}),
+      pageSize: PAGE,
+    });
+    await replay.start();
+    expect(replay.resumeFrom).toBe(50);
+
+    await expect(replay.catchUp()).rejects.toThrow();
+    await replay.handleLive(alert(56));
+
+    // Still 50: ids 51-55 were never fetched and must stay reachable.
+    expect(replay.resumeFrom).toBe(50);
   });
 
   it('forgets only the oldest ids when the de-duplication set fills', async () => {

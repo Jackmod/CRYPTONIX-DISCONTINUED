@@ -117,9 +117,6 @@ async function reconcileGuildConfigs() {
 client.once(Events.ClientReady, async (ready) => {
   console.log(`discord bot ready as ${ready.user.tag}`);
 
-  // Not awaited: if the engine is down right now this retries in the
-  // background rather than blocking login, so /setup still works and the
-  // routing table fills in as soon as the engine is reachable.
   // Both of these must finish before the socket opens, and both retry rather
   // than give up. Starting the stream first would fan alerts out to an empty
   // routing table — and they would still be marked delivered, so they would be

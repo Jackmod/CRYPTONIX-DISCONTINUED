@@ -37,6 +37,16 @@ export class AlertReplay {
   private cursor = 0;
   private started = false;
   private catchingUp = false;
+  /**
+   * False while a backlog may still lie behind the cursor.
+   *
+   * Live deliveries may only move the cursor when this is true. After a walk
+   * aborts mid-page, ids between the cursor and the failure point have not
+   * been fetched; letting a live alert jump the cursor past them would make
+   * them unreachable, which is the same class of bug the queue prevents while
+   * a walk is running.
+   */
+  private backlogClear = false;
   private queued: AlertEvent[] = [];
   private deliveredIds = new Set<number>();
   private readonly maxRememberedIds: number;
@@ -66,6 +76,8 @@ export class AlertReplay {
       try {
         this.cursor = await this.options.getAlertHead();
         this.started = true;
+        // The head IS the frontier, so by definition nothing is behind it.
+        this.backlogClear = true;
         return this.cursor;
       } catch (err) {
         console.error(`could not read the alert head; retrying in ${retryDelayMs}ms`, err);
@@ -99,6 +111,7 @@ export class AlertReplay {
     if (!this.started || this.catchingUp) return 0;
 
     this.catchingUp = true;
+    this.backlogClear = false;
     let posted = 0;
     try {
       for (;;) {
@@ -106,10 +119,18 @@ export class AlertReplay {
         if (page.length === 0) break;
 
         for (const alert of page) {
-          // Explicitly does NOT advance the cursor: doing so per-alert leaves
-          // it already equal to the page's highest id, so the progress check
-          // below trips immediately and the walk stops after one page.
-          if (await this.deliverOnce(alert, { advanceCursor: false })) posted++;
+          // Per-alert boundary. One undeliverable alert must not abort the
+          // walk: the cursor would never pass it, so every later reconnect
+          // would refetch the same page and die on the same alert, and
+          // everything behind it would stay undelivered forever.
+          try {
+            // Explicitly does NOT advance the cursor: doing so per-alert leaves
+            // it already equal to the page's highest id, so the progress check
+            // below trips immediately and the walk stops after one page.
+            if (await this.deliverOnce(alert, { advanceCursor: false })) posted++;
+          } catch (err) {
+            console.error(`could not deliver alert ${alert.id}; skipping it`, err);
+          }
         }
 
         const highest = page.reduce((max, alert) => Math.max(max, alert.id), this.cursor);
@@ -120,15 +141,22 @@ export class AlertReplay {
         // A short page means the backlog is exhausted.
         if (page.length < this.options.pageSize) break;
       }
+      this.backlogClear = true;
     } finally {
       this.catchingUp = false;
-    }
 
-    // Drain live alerts that arrived while the walk was running.
-    const pending = this.queued;
-    this.queued = [];
-    for (const alert of pending) {
-      if (await this.deliverOnce(alert)) posted++;
+      // In `finally`: a throw from the walk (a failing listAlertsSince, say)
+      // must not strand the live alerts queued behind it, which would
+      // otherwise wait for some future clean catch-up and pile up meanwhile.
+      const pending = this.queued;
+      this.queued = [];
+      for (const alert of pending) {
+        try {
+          if (await this.deliverOnce(alert)) posted++;
+        } catch (err) {
+          console.error(`could not deliver queued alert ${alert.id}; skipping it`, err);
+        }
+      }
     }
 
     return posted;
@@ -149,7 +177,10 @@ export class AlertReplay {
     // Only after a successful delivery: a throw should leave the alert
     // eligible for the next attempt rather than silently consumed.
     this.remember(alert.id);
-    if (advanceCursor) this.cursor = Math.max(this.cursor, alert.id);
+    // Only when nothing may still lie behind the cursor. After an aborted
+    // walk there are unfetched ids below this one, and moving past them would
+    // lose them.
+    if (advanceCursor && this.backlogClear) this.cursor = Math.max(this.cursor, alert.id);
     return true;
   }
 

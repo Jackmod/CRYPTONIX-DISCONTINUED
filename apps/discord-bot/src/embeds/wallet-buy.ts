@@ -36,18 +36,48 @@ function shortMint(mint: string): string {
   return mint.length <= 12 ? mint : `${mint.slice(0, 6)}…${mint.slice(-4)}`;
 }
 
+/** Discord rejects an embed title over 256 characters by throwing. */
+const MAX_EMBED_TITLE = 256;
+
+function clamp(text: string, max: number): string {
+  return text.length <= max ? text : `${text.slice(0, max - 1)}…`;
+}
+
+/**
+ * A link button throws unless the URL is a well-formed http(s) URL.
+ *
+ * The mint arrives from a webhook payload, so a malformed one would otherwise
+ * make the whole alert unrenderable — and an alert that cannot be rendered is
+ * an alert that can never be delivered, no matter how many times it is retried.
+ */
+function isUsableLink(link: string): boolean {
+  try {
+    const url = new URL(link);
+    return url.protocol === 'https:' || url.protocol === 'http:';
+  } catch {
+    return false;
+  }
+}
+
 export function buildWalletTradeMessage(payload: WalletAlertPayload) {
   const isBuy = payload.side === 'buy';
 
   const embed = new EmbedBuilder()
     .setColor(isBuy ? BUY_COLOR : SELL_COLOR)
-    .setTitle(`${isBuy ? '🟢 Buy' : '🔴 Sell'} — ${payload.walletLabel}`)
+    .setTitle(clamp(`${isBuy ? '🟢 Buy' : '🔴 Sell'} — ${payload.walletLabel}`, MAX_EMBED_TITLE))
     .addFields(
       { name: 'SOL', value: `${payload.solAmount.toFixed(4)} SOL`, inline: true },
       { name: 'Tokens', value: payload.tokenAmount.toLocaleString('en-US'), inline: true },
       { name: 'Mint', value: `\`${shortMint(payload.mint)}\``, inline: true }
     )
     .setTimestamp(new Date());
+
+  // A button with an unusable URL throws; the alert is worth posting without
+  // one, and losing the whole message over a link is not.
+  if (!isUsableLink(payload.axiomLink)) {
+    console.error(`alert for ${payload.mint} has an unusable Axiom link; posting without the button`);
+    return { embeds: [embed], components: [] };
+  }
 
   const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder().setLabel('Open on Axiom').setURL(payload.axiomLink).setStyle(ButtonStyle.Link)
