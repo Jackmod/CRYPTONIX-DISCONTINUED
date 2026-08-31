@@ -88,6 +88,13 @@ describe('engine API', () => {
     expect(res.body).toEqual({ walletId, sol: 4.2 });
   });
 
+  it('GET /wallets/:id/balance returns 404 for an unknown wallet', async () => {
+    const app = buildApp();
+    const res = await request(app).get('/wallets/4242/balance');
+    expect(res.status).toBe(404);
+    expect(res.body.error).toBe('wallet not found');
+  });
+
   it('rejects a non-numeric wallet id with 400 instead of hanging the request', async () => {
     // Regression guard: Number('abc') is NaN, which Postgres rejects with
     // "invalid input syntax for type integer". Under Express 4 that rejection
