@@ -35,6 +35,24 @@ describe('engine API', () => {
     await db.execute('TRUNCATE alerts, pnl_daily, wallet_trades, wallets, discord_guilds RESTART IDENTITY CASCADE');
   });
 
+  /** Like buildApp, but exposes the mocks so a test can assert on Helius calls. */
+  function buildAppWithMocks() {
+    const helius = {
+      createWalletWebhook: vi.fn().mockResolvedValue('wh_1'),
+      getTransactionHistory: vi.fn().mockResolvedValue([]),
+      deleteWalletWebhook: vi.fn().mockResolvedValue(undefined),
+    } as any;
+    const alertBus = new AlertBus();
+    const walletMonitor = new WalletMonitor(db, helius, alertBus);
+    const pnlTracker = new PnlTracker(db, helius);
+    const solanaRpc = { getBalanceSol: vi.fn().mockResolvedValue(4.2) };
+    return {
+      app: createServer(db, walletMonitor, pnlTracker, alertBus, solanaRpc, WEBHOOK_SECRET, API_KEY),
+      helius,
+      db,
+    };
+  }
+
   function buildApp() {
     const helius = {
       createWalletWebhook: vi.fn().mockResolvedValue('wh_1'),
@@ -447,11 +465,32 @@ describe('engine API', () => {
     // The insert would fail on the UNIQUE constraint, leaving a live webhook
     // that no row references: an orphan holding one of the free tier's
     // address slots forever, with nothing recording what held it.
-    const app = buildApp();
+    //
+    // Asserting the row count alone is not enough - it stays 1 whether one or
+    // two webhooks were created, so a regression to create-before-check would
+    // leak a webhook and still pass. Count the Helius calls.
+    const { app, helius } = buildAppWithMocks();
     await api(app).post('/wallets').send({ address: VALID_ADDRESS, label: 'First' });
     await api(app).post('/wallets').send({ address: VALID_ADDRESS, label: 'Second' });
 
+    expect(helius.createWalletWebhook).toHaveBeenCalledTimes(1);
     const listRes = await api(app).get('/wallets');
     expect(listRes.body).toHaveLength(1);
+  });
+
+  it('releases the webhook it just created when the wallet insert fails', async () => {
+    // Any write failure - pool exhaustion, statement timeout, connection reset
+    // - leaves a live webhook no row references unless it is handed back.
+    const { app, helius, db: scopedDb } = buildAppWithMocks();
+    const insertSpy = vi.spyOn(scopedDb, 'insert').mockImplementationOnce(() => {
+      throw new Error('simulated connection reset');
+    });
+
+    const res = await api(app).post('/wallets').send({ address: VALID_ADDRESS, label: 'X' });
+
+    expect(res.status).toBe(500);
+    expect(helius.createWalletWebhook).toHaveBeenCalledTimes(1);
+    expect(helius.deleteWalletWebhook).toHaveBeenCalledTimes(1);
+    insertSpy.mockRestore();
   });
 });

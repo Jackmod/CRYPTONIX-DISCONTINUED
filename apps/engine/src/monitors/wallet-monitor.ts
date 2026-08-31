@@ -20,33 +20,55 @@ export class WalletMonitor {
    *
    * The ordering here is load-bearing. wallets.address is UNIQUE, and the
    * webhook is registered with Helius before any row is written. Creating the
-   * webhook first and letting the insert fail on the constraint left a live
-   * webhook that no row referenced — an orphan consuming one of the free
-   * tier's address slots forever, with nothing recording what held it. So:
-   * look first, and if we still lose a race, hand the webhook straight back.
+   * webhook first and letting the write fail left a live webhook that no row
+   * referenced — an orphan consuming one of the free tier's address slots
+   * forever, with nothing recording what held it. So: look first, and if the
+   * write does not land for ANY reason — lost race, pool exhaustion, timeout,
+   * connection reset — hand the webhook straight back before giving up.
    */
   async trackWallet(address: string, label: string, isMine: boolean) {
-    const [existing] = await this.db.select().from(wallets).where(eq(wallets.address, address));
-    if (existing) return { wallet: existing, created: false };
+    // Bounded retry: losing the race to a writer that then untracks leaves
+    // nothing to return, and a second pass resolves it. Two attempts is
+    // plenty for a window this narrow, and it cannot spin.
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const [existing] = await this.db.select().from(wallets).where(eq(wallets.address, address));
+      if (existing) return { wallet: existing, created: false };
 
-    const webhookId = await this.helius.createWalletWebhook(address);
-    const [wallet] = await this.db
-      .insert(wallets)
-      .values({ address, label, isMine, heliusWebhookId: webhookId })
-      .onConflictDoNothing()
-      .returning();
+      const webhookId = await this.helius.createWalletWebhook(address);
 
-    if (!wallet) {
-      // A concurrent request won the race between our SELECT and INSERT.
-      // Give the webhook we just created back rather than orphaning it.
-      await this.helius.deleteWalletWebhook(webhookId).catch((err) => {
-        console.error(`could not release orphaned webhook ${webhookId}`, err);
-      });
+      let inserted: typeof wallets.$inferSelect | undefined;
+      try {
+        [inserted] = await this.db
+          .insert(wallets)
+          .values({ address, label, isMine, heliusWebhookId: webhookId })
+          .onConflictDoNothing()
+          .returning();
+      } catch (err) {
+        // The webhook exists but no row references it. Release it before the
+        // error propagates, or it is orphaned for good.
+        await this.releaseWebhook(webhookId);
+        throw err;
+      }
+
+      if (inserted) return { wallet: inserted, created: true };
+
+      // ON CONFLICT: a concurrent request won. Give our webhook back.
+      await this.releaseWebhook(webhookId);
+
       const [raced] = await this.db.select().from(wallets).where(eq(wallets.address, address));
-      return { wallet: raced, created: false };
+      if (raced) return { wallet: raced, created: false };
+      // The winner untracked between our INSERT and this SELECT, so the
+      // address is free again — loop and register it properly.
     }
 
-    return { wallet, created: true };
+    throw new Error(`could not register ${address}: it was concurrently added and removed twice`);
+  }
+
+  /** Best-effort webhook release; never masks the error that caused it. */
+  private async releaseWebhook(webhookId: string): Promise<void> {
+    await this.helius.deleteWalletWebhook(webhookId).catch((err) => {
+      console.error(`could not release orphaned webhook ${webhookId}`, err);
+    });
   }
 
   /**

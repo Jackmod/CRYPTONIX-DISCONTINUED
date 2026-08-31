@@ -142,9 +142,37 @@ async function main() {
     wallet = await createWalletDirectly(address, 'Smoke Test Wallet (--skip-helius)');
     console.log('   Inserted directly via drizzle:', wallet);
   } else {
-    const { status, body } = await createWalletViaApi('SmokeTestWallet111', 'Smoke Test Wallet');
+    // Must be a real base58 pubkey: POST /wallets validates the address before
+    // registering a webhook, so a placeholder like 'SmokeTestWallet111' (the
+    // 'l' is not in the base58 alphabet) is rejected with 400 every time.
+    // Wrapped SOL is a stable, well-known mainnet address.
+    const SMOKE_ADDRESS = 'So11111111111111111111111111111111111111112';
+
+    let { status, body } = await createWalletViaApi(SMOKE_ADDRESS, 'Smoke Test Wallet');
+
+    if (status === 409) {
+      // Left over from a previous run. Untrack and retry so the script is
+      // repeatable rather than passing only against a clean database.
+      console.log('   Already tracked from an earlier run; untracking and retrying...');
+      await fetch(`${BASE}/wallets/${body.wallet.id}`, { method: 'DELETE', headers: authed });
+      ({ status, body } = await createWalletViaApi(SMOKE_ADDRESS, 'Smoke Test Wallet'));
+    }
+
     if (status !== 201) {
       console.log(`   POST /wallets returned ${status}:`, body);
+      // Distinguish the failure modes. Reporting an auth or validation problem
+      // as "needs a real HELIUS_API_KEY" sends you chasing the wrong thing.
+      if (status === 401) {
+        console.log('\nFAILED: the engine rejected our credentials.');
+        console.log('   ENGINE_API_KEY in .env must match the value the running engine started with.');
+        ws.close();
+        process.exit(1);
+      }
+      if (status === 400) {
+        console.log('\nFAILED: the engine rejected the request as invalid - see the error above.');
+        ws.close();
+        process.exit(1);
+      }
       console.log(
         '\nSKIPPED: wallet registration needs a real HELIUS_API_KEY in .env — the rest of the flow was not exercised'
       );
