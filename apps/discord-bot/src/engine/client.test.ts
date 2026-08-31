@@ -52,7 +52,7 @@ describe('EngineClient', () => {
     (fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
       ok: false,
       status: 404,
-      text: async () => 'wallet not found',
+      text: async () => JSON.stringify({ error: 'wallet not found' }),
     });
 
     const error = await new EngineClient('http://engine:8787', 'test-key').getPnl(99).catch((e) => e);
@@ -123,5 +123,31 @@ describe('EngineClient', () => {
     const [, options] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
     expect(options.headers['Content-Type']).toBe('application/json');
     expect(options.headers.Authorization).toBe('Bearer secret-key');
+  });
+
+  it('unwraps the engine error message instead of quoting raw JSON', async () => {
+    // This string is shown verbatim in a Discord reply, so it must read as a
+    // sentence, not as a serialised response body.
+    (fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: false,
+      status: 400,
+      text: async () => JSON.stringify({ error: 'address is not a valid Solana public key' }),
+    });
+
+    const error = await new EngineClient('http://e:1', 'k').trackWallet('bad', 'L', false).catch((e) => e);
+
+    expect(error.message).toBe('address is not a valid Solana public key');
+  });
+
+  it('falls back to the raw body when the error is not JSON', async () => {
+    (fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: false,
+      status: 502,
+      text: async () => 'upstream reset',
+    });
+
+    const error = await new EngineClient('http://e:1', 'k').listWallets().catch((e) => e);
+
+    expect(error.message).toBe('upstream reset');
   });
 });

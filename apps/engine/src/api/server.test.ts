@@ -10,6 +10,8 @@ const TEST_DB_URL = process.env.TEST_DATABASE_URL ?? 'postgres://postgres:postgr
 const db = createDb(TEST_DB_URL);
 const WEBHOOK_SECRET = 'test-webhook-secret';
 const API_KEY = 'test-engine-api-key';
+/** A genuine mainnet pubkey: POST /wallets now rejects anything that is not one. */
+const VALID_ADDRESS = 'So11111111111111111111111111111111111111112';
 
 /**
  * Every engine route except /webhooks/helius now requires the engine API key.
@@ -49,9 +51,9 @@ describe('engine API', () => {
   it('POST /wallets creates a wallet and GET /wallets lists it', async () => {
     const app = buildApp();
 
-    const createRes = await api(app).post('/wallets').send({ address: 'Addr1', label: 'Test', isMine: true });
+    const createRes = await api(app).post('/wallets').send({ address: VALID_ADDRESS, label: 'Test', isMine: true });
     expect(createRes.status).toBe(201);
-    expect(createRes.body.address).toBe('Addr1');
+    expect(createRes.body.address).toBe(VALID_ADDRESS);
 
     const listRes = await api(app).get('/wallets');
     expect(listRes.status).toBe(200);
@@ -66,7 +68,7 @@ describe('engine API', () => {
 
   it('POST /webhooks/helius records a trade visible via GET /wallets/:id/trades', async () => {
     const app = buildApp();
-    const createRes = await api(app).post('/wallets').send({ address: 'Addr1', label: 'Test' });
+    const createRes = await api(app).post('/wallets').send({ address: VALID_ADDRESS, label: 'Test' });
     const walletId = createRes.body.id;
 
     await api(app)
@@ -77,8 +79,8 @@ describe('engine API', () => {
           signature: 'sig1',
           timestamp: 1_735_000_000,
           type: 'SWAP',
-          tokenTransfers: [{ fromUserAccount: 'Pool', toUserAccount: 'Addr1', mint: 'Mint1', tokenAmount: 1000 }],
-          nativeTransfers: [{ fromUserAccount: 'Addr1', toUserAccount: 'Pool', amount: 2_000_000_000 }],
+          tokenTransfers: [{ fromUserAccount: 'Pool', toUserAccount: VALID_ADDRESS, mint: 'Mint1', tokenAmount: 1000 }],
+          nativeTransfers: [{ fromUserAccount: VALID_ADDRESS, toUserAccount: 'Pool', amount: 2_000_000_000 }],
         },
       ]);
 
@@ -101,15 +103,15 @@ describe('engine API', () => {
     // reject forged deliveries instead of writing them into wallet_trades
     // and alerts with no audit trail.
     const app = buildApp();
-    const createRes = await api(app).post('/wallets').send({ address: 'Addr1', label: 'Test' });
+    const createRes = await api(app).post('/wallets').send({ address: VALID_ADDRESS, label: 'Test' });
     const walletId = createRes.body.id;
     const payload = [
       {
         signature: 'sig1',
         timestamp: 1_735_000_000,
         type: 'SWAP',
-        tokenTransfers: [{ fromUserAccount: 'Pool', toUserAccount: 'Addr1', mint: 'Mint1', tokenAmount: 1000 }],
-        nativeTransfers: [{ fromUserAccount: 'Addr1', toUserAccount: 'Pool', amount: 2_000_000_000 }],
+        tokenTransfers: [{ fromUserAccount: 'Pool', toUserAccount: VALID_ADDRESS, mint: 'Mint1', tokenAmount: 1000 }],
+        nativeTransfers: [{ fromUserAccount: VALID_ADDRESS, toUserAccount: 'Pool', amount: 2_000_000_000 }],
       },
     ];
 
@@ -130,7 +132,7 @@ describe('engine API', () => {
     // whatever it was when the wallet was added and drifted from reality
     // with every subsequent trade.
     const app = buildApp();
-    const createRes = await api(app).post('/wallets').send({ address: 'Addr1', label: 'Test' });
+    const createRes = await api(app).post('/wallets').send({ address: VALID_ADDRESS, label: 'Test' });
     const walletId = createRes.body.id;
 
     await api(app)
@@ -141,8 +143,8 @@ describe('engine API', () => {
           signature: 'buy1',
           timestamp: 1_735_000_000,
           type: 'SWAP',
-          tokenTransfers: [{ fromUserAccount: 'Pool', toUserAccount: 'Addr1', mint: 'Mint1', tokenAmount: 1000 }],
-          nativeTransfers: [{ fromUserAccount: 'Addr1', toUserAccount: 'Pool', amount: 2_000_000_000 }],
+          tokenTransfers: [{ fromUserAccount: 'Pool', toUserAccount: VALID_ADDRESS, mint: 'Mint1', tokenAmount: 1000 }],
+          nativeTransfers: [{ fromUserAccount: VALID_ADDRESS, toUserAccount: 'Pool', amount: 2_000_000_000 }],
         },
       ]);
 
@@ -154,8 +156,8 @@ describe('engine API', () => {
           signature: 'sell1',
           timestamp: 1_735_003_600,
           type: 'SWAP',
-          tokenTransfers: [{ fromUserAccount: 'Addr1', toUserAccount: 'Pool', mint: 'Mint1', tokenAmount: 1000 }],
-          nativeTransfers: [{ fromUserAccount: 'Pool', toUserAccount: 'Addr1', amount: 3_000_000_000 }],
+          tokenTransfers: [{ fromUserAccount: VALID_ADDRESS, toUserAccount: 'Pool', mint: 'Mint1', tokenAmount: 1000 }],
+          nativeTransfers: [{ fromUserAccount: 'Pool', toUserAccount: VALID_ADDRESS, amount: 3_000_000_000 }],
         },
       ]);
 
@@ -191,7 +193,7 @@ describe('engine API', () => {
 
   it('GET /wallets/:id/pnl returns the daily PnL rows', async () => {
     const app = buildApp();
-    const createRes = await api(app).post('/wallets').send({ address: 'Addr1', label: 'Test' });
+    const createRes = await api(app).post('/wallets').send({ address: VALID_ADDRESS, label: 'Test' });
     const walletId = createRes.body.id;
 
     const res = await api(app).get(`/wallets/${walletId}/pnl`);
@@ -201,7 +203,7 @@ describe('engine API', () => {
 
   it('GET /wallets/:id/balance returns the live SOL balance', async () => {
     const app = buildApp();
-    const createRes = await api(app).post('/wallets').send({ address: 'Addr1', label: 'Test' });
+    const createRes = await api(app).post('/wallets').send({ address: VALID_ADDRESS, label: 'Test' });
     const walletId = createRes.body.id;
 
     const res = await api(app).get(`/wallets/${walletId}/balance`);
@@ -248,7 +250,7 @@ describe('engine API', () => {
       API_KEY
     );
 
-    const res = await api(app).post('/wallets').send({ address: 'Addr1', label: 'Test' });
+    const res = await api(app).post('/wallets').send({ address: VALID_ADDRESS, label: 'Test' });
 
     expect(res.status).toBe(500);
     expect(res.body.error).toBe('internal error');
@@ -256,7 +258,7 @@ describe('engine API', () => {
 
   it('DELETE /wallets/:id removes the wallet and releases its Helius webhook', async () => {
     const app = buildApp();
-    const createRes = await api(app).post('/wallets').send({ address: 'Addr1', label: 'Test' });
+    const createRes = await api(app).post('/wallets').send({ address: VALID_ADDRESS, label: 'Test' });
     const walletId = createRes.body.id;
 
     const delRes = await api(app).delete(`/wallets/${walletId}`);
@@ -271,7 +273,7 @@ describe('engine API', () => {
     // deleting the parent row first is a FK violation. This is the regression
     // guard: a wallet is only untrackable in practice once it has history.
     const app = buildApp();
-    const createRes = await api(app).post('/wallets').send({ address: 'Addr1', label: 'Test' });
+    const createRes = await api(app).post('/wallets').send({ address: VALID_ADDRESS, label: 'Test' });
     const walletId = createRes.body.id;
 
     await api(app)
@@ -282,8 +284,8 @@ describe('engine API', () => {
           signature: 'sig1',
           timestamp: 1_735_000_000,
           type: 'SWAP',
-          tokenTransfers: [{ fromUserAccount: 'Pool', toUserAccount: 'Addr1', mint: 'Mint1', tokenAmount: 100 }],
-          nativeTransfers: [{ fromUserAccount: 'Addr1', toUserAccount: 'Pool', amount: 1_000_000_000 }],
+          tokenTransfers: [{ fromUserAccount: 'Pool', toUserAccount: VALID_ADDRESS, mint: 'Mint1', tokenAmount: 100 }],
+          nativeTransfers: [{ fromUserAccount: VALID_ADDRESS, toUserAccount: 'Pool', amount: 1_000_000_000 }],
         },
       ]);
 
@@ -380,7 +382,7 @@ describe('engine API', () => {
     // Helius only knows the webhook secret, never the engine API key, so that
     // route must stay reachable with webhook auth alone.
     const app = buildApp();
-    await api(app).post('/wallets').send({ address: 'Addr1', label: 'Test' });
+    await api(app).post('/wallets').send({ address: VALID_ADDRESS, label: 'Test' });
 
     const res = await request(app)
       .post('/webhooks/helius')
@@ -407,5 +409,27 @@ describe('engine API', () => {
         ''
       )
     ).toThrow('non-empty apiKey');
+  });
+
+  it('POST /wallets rejects an address that is not a Solana public key', async () => {
+    // Registering a webhook against nonsense would consume one of the free
+    // tier's address slots forever and then never fire.
+    const app = buildApp();
+    const res = await api(app).post('/wallets').send({ address: 'not-an-address', label: 'X' });
+    expect(res.status).toBe(400);
+  });
+
+  it('POST /wallets rejects an Ethereum address', async () => {
+    const app = buildApp();
+    const res = await api(app)
+      .post('/wallets')
+      .send({ address: '0x742d35Cc6634C0532925a3b844Bc454e4438f44e', label: 'X' });
+    expect(res.status).toBe(400);
+  });
+
+  it('POST /wallets rejects an absurdly long label', async () => {
+    const app = buildApp();
+    const res = await api(app).post('/wallets').send({ address: VALID_ADDRESS, label: 'x'.repeat(5000) });
+    expect(res.status).toBe(400);
   });
 });

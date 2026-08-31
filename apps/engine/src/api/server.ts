@@ -8,6 +8,9 @@ import type { WalletMonitor } from '../monitors/wallet-monitor.js';
 import type { PnlTracker } from '../monitors/pnl-tracker.js';
 import type { AlertBus } from './alert-bus.js';
 import type { SolanaRpcClient } from '../solana/balance.js';
+import { isValidSolanaAddress } from '../solana/address.js';
+
+const MAX_LABEL_LENGTH = 100;
 
 /**
  * Express 4 does not forward a rejected promise from an async handler to its
@@ -133,6 +136,19 @@ export function createServer(
     const { address, label, isMine } = (req.body ?? {}) as { address?: string; label?: string; isMine?: boolean };
     if (!address || !label) {
       res.status(400).json({ error: 'address and label are required' });
+      return;
+    }
+    // trackWallet registers a Helius webhook before writing anything, and the
+    // free tier caps how many addresses may have one. An invalid address would
+    // consume a slot permanently and then never fire.
+    if (!isValidSolanaAddress(address)) {
+      res.status(400).json({ error: 'address is not a valid Solana public key' });
+      return;
+    }
+    // The label is free text stored in an unbounded column and echoed into
+    // Discord embeds; cap it rather than letting a megabyte through.
+    if (label.length > MAX_LABEL_LENGTH) {
+      res.status(400).json({ error: `label must be ${MAX_LABEL_LENGTH} characters or fewer` });
       return;
     }
     const wallet = await walletMonitor.trackWallet(address, label, Boolean(isMine));

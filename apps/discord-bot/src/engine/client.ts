@@ -46,7 +46,19 @@ export class EngineClient {
       throw new EngineError(`engine unreachable: ${(err as Error).message}`, 0);
     }
     if (!res.ok) {
-      throw new EngineError(`engine ${init?.method ?? 'GET'} ${path} failed: ${await res.text()}`, res.status);
+      // The engine answers errors as {"error": "..."}. Surface that sentence on
+      // its own: it is written for a human, and it ends up verbatim in a
+      // Discord reply. Falling back to the raw body keeps unexpected shapes
+      // debuggable rather than silently blank.
+      const body = await res.text();
+      let message = body;
+      try {
+        const parsed = JSON.parse(body) as { error?: string };
+        if (typeof parsed.error === 'string') message = parsed.error;
+      } catch {
+        // not JSON; keep the raw body
+      }
+      throw new EngineError(message, res.status);
     }
     return res;
   }
