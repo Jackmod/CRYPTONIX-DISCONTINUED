@@ -32,7 +32,23 @@ export class WalletMonitor {
     // plenty for a window this narrow, and it cannot spin.
     for (let attempt = 0; attempt < 2; attempt++) {
       const [existing] = await this.db.select().from(wallets).where(eq(wallets.address, address));
-      if (existing) return { wallet: existing, created: false };
+      if (existing?.heliusWebhookId) return { wallet: existing, created: false };
+
+      if (existing) {
+        // Tracked, but holding no webhook: either untrackWallet released the
+        // webhook and then failed to remove the rows, or the row was inserted
+        // directly (the smoke test's --skip-helius path). Either way it would
+        // sit there answering 409 "already tracked" forever while receiving no
+        // alerts. Register a webhook and heal it instead.
+        const healedWebhookId = await this.helius.createWalletWebhook(address);
+        const [healed] = await this.db
+          .update(wallets)
+          .set({ heliusWebhookId: healedWebhookId })
+          .where(eq(wallets.id, existing.id))
+          .returning();
+        console.warn(`wallet ${existing.id} had no Helius webhook; re-registered as ${healedWebhookId}`);
+        return { wallet: healed, created: false };
+      }
 
       const webhookId = await this.helius.createWalletWebhook(address);
 
@@ -87,6 +103,12 @@ export class WalletMonitor {
 
     if (wallet.heliusWebhookId) {
       await this.helius.deleteWalletWebhook(wallet.heliusWebhookId);
+      // Record that the webhook is gone before touching anything else. If the
+      // row deletions below fail, the wallet survives with a NULL webhook id,
+      // which is the truth — and trackWallet heals that state. Leaving the
+      // stale id would make the row look tracked while silently receiving
+      // nothing, forever.
+      await this.db.update(wallets).set({ heliusWebhookId: null }).where(eq(wallets.id, walletId));
     }
 
     // Children before parent: both tables carry a FK onto wallets.id.

@@ -60,7 +60,13 @@ export class HeliusClient {
    * secret that protects /webhooks/helius to everyone in the channel.
    */
   private redact(text: string): string {
-    let out = text.split(this.config.apiKey).join('[redacted: api key]');
+    let out = text;
+    // Both guards matter: String.split('') splits between every character, so
+    // an empty secret would shred the message into one marker per character
+    // instead of redacting nothing.
+    if (this.config.apiKey) {
+      out = out.split(this.config.apiKey).join('[redacted: api key]');
+    }
     if (this.config.webhookSecret) {
       out = out.split(this.config.webhookSecret).join('[redacted: webhook secret]');
     }

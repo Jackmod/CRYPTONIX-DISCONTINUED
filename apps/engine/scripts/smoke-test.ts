@@ -129,9 +129,20 @@ async function main() {
   const alertReceived = new Promise<any>((resolve) => {
     ws.on('message', (data) => resolve(JSON.parse(data.toString())));
   });
-  await new Promise((resolve, reject) => {
-    ws.on('open', resolve);
-    ws.on('error', reject);
+  await new Promise<void>((resolve, reject) => {
+    ws.on('open', () => resolve());
+    ws.on('error', (err: Error) => {
+      // The alert socket authenticates with the same ENGINE_API_KEY as the
+      // REST calls and is opened first, so a key mismatch surfaces here as a
+      // raw "Unexpected server response: 401" long before the REST branch
+      // that explains it. Name the cause at the point it actually fails.
+      if (err.message.includes('401')) {
+        console.error('\nFAILED: the engine rejected our credentials on the alert socket.');
+        console.error('   ENGINE_API_KEY in .env must match the value the running engine started with.');
+        process.exit(1);
+      }
+      reject(err);
+    });
   });
 
   console.log('1. Creating a wallet...' + (SKIP_HELIUS ? ' (--skip-helius: inserting directly, no Helius call)' : ''));

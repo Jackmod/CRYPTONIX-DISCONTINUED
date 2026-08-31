@@ -1,0 +1,9 @@
+{
+  "extends": "@cryptonix/config/tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true
+  },
+  "include": ["src", "scripts"],
+  "comment": "Mirrors tsconfig.json's exclusion: test files deliberately omit the .js extension on relative imports, which NodeNext rejects. They are checked by vitest instead.",
+  "exclude": ["src/**/*.test.ts"]
+}

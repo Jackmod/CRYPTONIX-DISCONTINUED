@@ -204,7 +204,21 @@ export function createServer(
     asyncRoute(async (req, res) => {
       const walletId = parseWalletId(req, res);
       if (walletId === null) return;
-      const removed = await walletMonitor.untrackWallet(walletId);
+      let removed: boolean;
+      try {
+        removed = await walletMonitor.untrackWallet(walletId);
+      } catch (err) {
+        if (err instanceof HeliusError) {
+          // The wallet row deliberately survives a failed webhook release, so
+          // the operator can retry rather than leaving a live webhook nothing
+          // references. Say that, instead of a bare "internal error".
+          res.status(502).json({
+            error: `Helius refused to release the webhook, so the wallet is still tracked: ${err.message}`,
+          });
+          return;
+        }
+        throw err;
+      }
       if (!removed) {
         res.status(404).json({ error: 'wallet not found' });
         return;
