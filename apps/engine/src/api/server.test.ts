@@ -1,0 +1,78 @@
+import { describe, it, expect, beforeEach, vi } from 'vitest';
+import request from 'supertest';
+import { createDb } from '@cryptonix/db';
+import { createServer } from './server';
+import { WalletMonitor } from '../monitors/wallet-monitor';
+import { PnlTracker } from '../monitors/pnl-tracker';
+import { AlertBus } from './alert-bus';
+
+const TEST_DB_URL = process.env.TEST_DATABASE_URL ?? 'postgres://postgres:postgres@localhost:5432/cryptonix_test';
+const db = createDb(TEST_DB_URL);
+
+describe('engine API', () => {
+  beforeEach(async () => {
+    await db.execute('TRUNCATE alerts, pnl_daily, wallet_trades, wallets RESTART IDENTITY CASCADE');
+  });
+
+  function buildApp() {
+    const helius = {
+      createWalletWebhook: vi.fn().mockResolvedValue('wh_1'),
+      getTransactionHistory: vi.fn().mockResolvedValue([]),
+    } as any;
+    const alertBus = new AlertBus();
+    const walletMonitor = new WalletMonitor(db, helius, alertBus);
+    const pnlTracker = new PnlTracker(db, helius);
+    return createServer(db, walletMonitor, pnlTracker, alertBus);
+  }
+
+  it('POST /wallets creates a wallet and GET /wallets lists it', async () => {
+    const app = buildApp();
+
+    const createRes = await request(app).post('/wallets').send({ address: 'Addr1', label: 'Test', isMine: true });
+    expect(createRes.status).toBe(201);
+    expect(createRes.body.address).toBe('Addr1');
+
+    const listRes = await request(app).get('/wallets');
+    expect(listRes.status).toBe(200);
+    expect(listRes.body).toHaveLength(1);
+  });
+
+  it('POST /wallets without an address returns 400', async () => {
+    const app = buildApp();
+    const res = await request(app).post('/wallets').send({ label: 'Test' });
+    expect(res.status).toBe(400);
+  });
+
+  it('POST /webhooks/helius records a trade visible via GET /wallets/:id/trades', async () => {
+    const app = buildApp();
+    const createRes = await request(app).post('/wallets').send({ address: 'Addr1', label: 'Test' });
+    const walletId = createRes.body.id;
+
+    await request(app)
+      .post('/webhooks/helius')
+      .send([
+        {
+          signature: 'sig1',
+          timestamp: 1_735_000_000,
+          type: 'SWAP',
+          tokenTransfers: [{ fromUserAccount: 'Pool', toUserAccount: 'Addr1', mint: 'Mint1', tokenAmount: 1000 }],
+          nativeTransfers: [{ fromUserAccount: 'Addr1', toUserAccount: 'Pool', amount: 2_000_000_000 }],
+        },
+      ]);
+
+    const tradesRes = await request(app).get(`/wallets/${walletId}/trades`);
+    expect(tradesRes.status).toBe(200);
+    expect(tradesRes.body).toHaveLength(1);
+    expect(tradesRes.body[0].side).toBe('buy');
+  });
+
+  it('GET /wallets/:id/pnl returns the daily PnL rows', async () => {
+    const app = buildApp();
+    const createRes = await request(app).post('/wallets').send({ address: 'Addr1', label: 'Test' });
+    const walletId = createRes.body.id;
+
+    const res = await request(app).get(`/wallets/${walletId}/pnl`);
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual([]);
+  });
+});
