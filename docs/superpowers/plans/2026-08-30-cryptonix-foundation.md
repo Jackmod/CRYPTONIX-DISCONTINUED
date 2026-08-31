@@ -206,7 +206,8 @@ git commit -m "Scaffold pnpm/Turborepo monorepo"
 ```json
 {
   "extends": "@cryptonix/config/tsconfig.base.json",
-  "include": ["src"]
+  "include": ["src"],
+  "exclude": ["src/**/*.test.ts"]
 }
 ```
 
@@ -626,7 +627,8 @@ git commit -m "core: add FIFO PnL calculator, barrel export"
 ```json
 {
   "extends": "@cryptonix/config/tsconfig.base.json",
-  "include": ["src"]
+  "include": ["src"],
+  "exclude": ["src/**/*.test.ts"]
 }
 ```
 
@@ -818,7 +820,8 @@ git commit -m "db: add Drizzle schema, client, and migrations"
 ```json
 {
   "extends": "@cryptonix/config/tsconfig.base.json",
-  "include": ["src"]
+  "include": ["src"],
+  "exclude": ["src/**/*.test.ts"]
 }
 ```
 
