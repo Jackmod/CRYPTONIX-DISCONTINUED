@@ -7,7 +7,7 @@ import { fanOutAlert } from './guilds/fan-out.js';
 import { commands } from './commands/registry.js';
 import { describeError } from './commands/types.js';
 
-const engine = new EngineClient(env.engineHttpUrl);
+const engine = new EngineClient(env.engineHttpUrl, env.engineApiKey);
 const guildConfigs = new GuildConfigCache(engine);
 const commandsByName = new Map(commands.map((command) => [command.data.name, command]));
 

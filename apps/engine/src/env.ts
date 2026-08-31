@@ -38,5 +38,9 @@ export const env = {
   // on every delivery (see helius/client.ts's authHeader), and the route
   // checks it before writing anything (see api/server.ts).
   webhookSecret: required('WEBHOOK_SECRET'),
+  // Guards every route except /webhooks/helius. WEBHOOK_BASE_URL must be
+  // publicly reachable for Helius to deliver, which exposes this whole API;
+  // without a key anyone who finds the host owns the wallet list.
+  apiKey: required('ENGINE_API_KEY'),
   port: Number(process.env.PORT ?? 8787),
 };

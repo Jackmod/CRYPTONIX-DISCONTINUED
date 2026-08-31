@@ -13,7 +13,7 @@ describe('EngineClient', () => {
       json: async () => [{ id: 1, address: 'Addr1', label: 'Me' }],
     });
 
-    const wallets = await new EngineClient('http://engine:8787').listWallets();
+    const wallets = await new EngineClient('http://engine:8787', 'test-key').listWallets();
 
     expect(wallets).toHaveLength(1);
     expect((fetch as ReturnType<typeof vi.fn>).mock.calls[0][0]).toBe('http://engine:8787/wallets');
@@ -26,7 +26,7 @@ describe('EngineClient', () => {
       json: async () => ({ id: 7, address: 'Addr1', label: 'Whale' }),
     });
 
-    const wallet = await new EngineClient('http://engine:8787').trackWallet('Addr1', 'Whale', false);
+    const wallet = await new EngineClient('http://engine:8787', 'test-key').trackWallet('Addr1', 'Whale', false);
 
     expect(wallet.id).toBe(7);
     const [, options] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
@@ -45,7 +45,7 @@ describe('EngineClient', () => {
       },
     });
 
-    await expect(new EngineClient('http://engine:8787').untrackWallet(7)).resolves.toBeUndefined();
+    await expect(new EngineClient('http://engine:8787', 'test-key').untrackWallet(7)).resolves.toBeUndefined();
   });
 
   it('raises EngineError carrying the status code', async () => {
@@ -55,7 +55,7 @@ describe('EngineClient', () => {
       text: async () => 'wallet not found',
     });
 
-    const error = await new EngineClient('http://engine:8787').getPnl(99).catch((e) => e);
+    const error = await new EngineClient('http://engine:8787', 'test-key').getPnl(99).catch((e) => e);
 
     expect(error).toBeInstanceOf(EngineError);
     expect(error.status).toBe(404);
@@ -67,7 +67,7 @@ describe('EngineClient', () => {
     // from fetch must not escape.
     (fetch as ReturnType<typeof vi.fn>).mockRejectedValue(new TypeError('fetch failed'));
 
-    const error = await new EngineClient('http://engine:8787').listWallets().catch((e) => e);
+    const error = await new EngineClient('http://engine:8787', 'test-key').listWallets().catch((e) => e);
 
     expect(error).toBeInstanceOf(EngineError);
     expect(error.status).toBe(0);
@@ -80,7 +80,7 @@ describe('EngineClient', () => {
       json: async () => [{ guildId: 'g1', alertChannelId: 'c1' }],
     });
 
-    const configs = await new EngineClient('http://engine:8787').listGuildConfigs();
+    const configs = await new EngineClient('http://engine:8787', 'test-key').listGuildConfigs();
 
     expect(configs[0].guildId).toBe('g1');
     expect((fetch as ReturnType<typeof vi.fn>).mock.calls[0][0]).toBe('http://engine:8787/discord/guilds');
@@ -93,12 +93,35 @@ describe('EngineClient', () => {
       json: async () => ({ guildId: 'g1', alertChannelId: 'c2' }),
     });
 
-    const config = await new EngineClient('http://engine:8787').setGuildConfig('g1', 'c2', 'user1');
+    const config = await new EngineClient('http://engine:8787', 'test-key').setGuildConfig('g1', 'c2', 'user1');
 
     expect(config.alertChannelId).toBe('c2');
     const [url, options] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
     expect(url).toBe('http://engine:8787/discord/guilds/g1');
     expect(options.method).toBe('PUT');
     expect(JSON.parse(options.body)).toEqual({ alertChannelId: 'c2', setupBy: 'user1' });
+  });
+
+  it('sends the engine API key on every request', async () => {
+    // The engine is publicly reachable so Helius can deliver; without this
+    // header every call comes back 401.
+    (fetch as ReturnType<typeof vi.fn>).mockResolvedValue({ ok: true, status: 200, json: async () => [] });
+
+    await new EngineClient('http://engine:8787', 'secret-key').listWallets();
+
+    const [, options] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(options.headers.Authorization).toBe('Bearer secret-key');
+  });
+
+  it('keeps content-type when adding the auth header', async () => {
+    // A regression guard: spreading headers wrongly would drop
+    // Content-Type and the engine would parse an empty body.
+    (fetch as ReturnType<typeof vi.fn>).mockResolvedValue({ ok: true, status: 201, json: async () => ({}) });
+
+    await new EngineClient('http://engine:8787', 'secret-key').trackWallet('Addr1', 'L', false);
+
+    const [, options] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(options.headers['Content-Type']).toBe('application/json');
+    expect(options.headers.Authorization).toBe('Bearer secret-key');
   });
 });

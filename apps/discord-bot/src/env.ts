@@ -39,5 +39,8 @@ export const env = {
   // DISCORD_ALERT_CHANNEL_ID is deliberately absent: alert routing is
   // per-server, stored in discord_guilds and set with /setup.
   engineHttpUrl: required('ENGINE_HTTP_URL'),
+  // Must match the engine's ENGINE_API_KEY; every engine route except the
+  // Helius webhook rejects requests without it.
+  engineApiKey: required('ENGINE_API_KEY'),
   engineWsUrl: required('ENGINE_WS_URL'),
 };

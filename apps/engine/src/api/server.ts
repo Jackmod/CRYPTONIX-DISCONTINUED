@@ -1,4 +1,4 @@
-import express, { type Express, type Request, type Response } from 'express';
+import express, { type Express, type NextFunction, type Request, type Response } from 'express';
 import { timingSafeEqual } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import type { Db } from '@cryptonix/db';
@@ -68,16 +68,62 @@ function isValidWebhookAuth(header: string | undefined, secret: string): boolean
   return timingSafeEqual(received, expected);
 }
 
+/**
+ * Gate for every route except /webhooks/helius.
+ *
+ * WEBHOOK_BASE_URL has to be publicly reachable for Helius to deliver at all,
+ * which puts this entire API on the internet. Unauthenticated, that means
+ * anyone who finds the host can read every tracked wallet, register wallets
+ * (burning the free-tier webhook cap and Helius credits), DELETE a wallet
+ * along with trade rows that live delivery cannot rebuild, or repoint a
+ * Discord server's alert routing.
+ *
+ * /webhooks/helius is exempt because Helius only ever knows the webhook
+ * secret; it authenticates itself with that instead (see isValidWebhookAuth).
+ */
+function requireApiKey(apiKey: string) {
+  return (req: Request, res: Response, next: NextFunction) => {
+    if (req.path.startsWith('/webhooks/')) return next();
+
+    const header = req.header('authorization') ?? '';
+    const prefix = 'Bearer ';
+    if (!header.startsWith(prefix)) {
+      res.status(401).json({ error: 'missing or malformed Authorization header' });
+      return;
+    }
+
+    const received = Buffer.from(header.slice(prefix.length));
+    const expected = Buffer.from(apiKey);
+    // Length check first: timingSafeEqual throws on differing lengths.
+    if (received.length !== expected.length || !timingSafeEqual(received, expected)) {
+      res.status(401).json({ error: 'invalid API key' });
+      return;
+    }
+    next();
+  };
+}
+
 export function createServer(
   db: Db,
   walletMonitor: WalletMonitor,
   pnlTracker: PnlTracker,
   _alertBus: AlertBus,
   solanaRpc: Pick<SolanaRpcClient, 'getBalanceSol'>,
-  webhookSecret: string
+  webhookSecret: string,
+  apiKey: string
 ): Express {
+  // An empty key would be catastrophic rather than merely permissive: two
+  // zero-length buffers compare equal, so `Authorization: Bearer ` with no
+  // value would authenticate every request. Fail at startup instead.
+  if (!apiKey) throw new Error('createServer requires a non-empty apiKey');
+
   const app = express();
-  app.use(express.json());
+  // Helius delivers enhanced transactions in batches; a busy wallet's batch
+  // comfortably exceeds express.json()'s 100kb default. Rejecting one with 413
+  // would make Helius retry the same oversized batch forever and those trades
+  // would never land.
+  app.use(express.json({ limit: '2mb' }));
+  app.use(requireApiKey(apiKey));
 
   app.get('/wallets', asyncRoute(async (_req, res) => {
     res.json(await db.select().from(wallets));

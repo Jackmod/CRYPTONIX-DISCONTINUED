@@ -12,6 +12,7 @@ const REQUIRED = {
   DISCORD_CLIENT_ID: 'client1',
   DISCORD_GUILD_ID: 'guild1',
   ENGINE_HTTP_URL: 'http://localhost:8787',
+  ENGINE_API_KEY: 'engine-key',
   ENGINE_WS_URL: 'ws://localhost:8787/ws',
 };
 

@@ -9,6 +9,24 @@ import { AlertBus } from './alert-bus';
 const TEST_DB_URL = process.env.TEST_DATABASE_URL ?? 'postgres://postgres:postgres@localhost:5432/cryptonix_test';
 const db = createDb(TEST_DB_URL);
 const WEBHOOK_SECRET = 'test-webhook-secret';
+const API_KEY = 'test-engine-api-key';
+
+/**
+ * Every engine route except /webhooks/helius now requires the engine API key.
+ * This wrapper attaches it so the tests exercise the same path real callers
+ * take. The webhook tests set their own Authorization header afterwards, which
+ * overrides this one - and that route skips API-key auth by design.
+ */
+function api(app: Parameters<typeof request>[0]) {
+  const r = request(app);
+  const auth = (t: request.Test) => t.set('Authorization', `Bearer ${API_KEY}`);
+  return {
+    get: (path: string) => auth(r.get(path)),
+    post: (path: string) => auth(r.post(path)),
+    put: (path: string) => auth(r.put(path)),
+    delete: (path: string) => auth(r.delete(path)),
+  };
+}
 
 describe('engine API', () => {
   beforeEach(async () => {
@@ -25,33 +43,33 @@ describe('engine API', () => {
     const walletMonitor = new WalletMonitor(db, helius, alertBus);
     const pnlTracker = new PnlTracker(db, helius);
     const solanaRpc = { getBalanceSol: vi.fn().mockResolvedValue(4.2) };
-    return createServer(db, walletMonitor, pnlTracker, alertBus, solanaRpc, WEBHOOK_SECRET);
+    return createServer(db, walletMonitor, pnlTracker, alertBus, solanaRpc, WEBHOOK_SECRET, API_KEY);
   }
 
   it('POST /wallets creates a wallet and GET /wallets lists it', async () => {
     const app = buildApp();
 
-    const createRes = await request(app).post('/wallets').send({ address: 'Addr1', label: 'Test', isMine: true });
+    const createRes = await api(app).post('/wallets').send({ address: 'Addr1', label: 'Test', isMine: true });
     expect(createRes.status).toBe(201);
     expect(createRes.body.address).toBe('Addr1');
 
-    const listRes = await request(app).get('/wallets');
+    const listRes = await api(app).get('/wallets');
     expect(listRes.status).toBe(200);
     expect(listRes.body).toHaveLength(1);
   });
 
   it('POST /wallets without an address returns 400', async () => {
     const app = buildApp();
-    const res = await request(app).post('/wallets').send({ label: 'Test' });
+    const res = await api(app).post('/wallets').send({ label: 'Test' });
     expect(res.status).toBe(400);
   });
 
   it('POST /webhooks/helius records a trade visible via GET /wallets/:id/trades', async () => {
     const app = buildApp();
-    const createRes = await request(app).post('/wallets').send({ address: 'Addr1', label: 'Test' });
+    const createRes = await api(app).post('/wallets').send({ address: 'Addr1', label: 'Test' });
     const walletId = createRes.body.id;
 
-    await request(app)
+    await api(app)
       .post('/webhooks/helius')
       .set('Authorization', WEBHOOK_SECRET)
       .send([
@@ -64,7 +82,7 @@ describe('engine API', () => {
         },
       ]);
 
-    const tradesRes = await request(app).get(`/wallets/${walletId}/trades`);
+    const tradesRes = await api(app).get(`/wallets/${walletId}/trades`);
     expect(tradesRes.status).toBe(200);
     expect(tradesRes.body).toHaveLength(1);
     expect(tradesRes.body[0].side).toBe('buy');
@@ -73,7 +91,7 @@ describe('engine API', () => {
   it('POST /webhooks/helius with the correct Authorization header succeeds', async () => {
     const app = buildApp();
 
-    const res = await request(app).post('/webhooks/helius').set('Authorization', WEBHOOK_SECRET).send([]);
+    const res = await api(app).post('/webhooks/helius').set('Authorization', WEBHOOK_SECRET).send([]);
 
     expect(res.status).toBe(200);
   });
@@ -83,7 +101,7 @@ describe('engine API', () => {
     // reject forged deliveries instead of writing them into wallet_trades
     // and alerts with no audit trail.
     const app = buildApp();
-    const createRes = await request(app).post('/wallets').send({ address: 'Addr1', label: 'Test' });
+    const createRes = await api(app).post('/wallets').send({ address: 'Addr1', label: 'Test' });
     const walletId = createRes.body.id;
     const payload = [
       {
@@ -95,13 +113,13 @@ describe('engine API', () => {
       },
     ];
 
-    const wrongRes = await request(app).post('/webhooks/helius').set('Authorization', 'wrong-secret').send(payload);
+    const wrongRes = await api(app).post('/webhooks/helius').set('Authorization', 'wrong-secret').send(payload);
     expect(wrongRes.status).toBe(401);
 
-    const missingRes = await request(app).post('/webhooks/helius').send(payload);
+    const missingRes = await api(app).post('/webhooks/helius').send(payload);
     expect(missingRes.status).toBe(401);
 
-    const tradesRes = await request(app).get(`/wallets/${walletId}/trades`);
+    const tradesRes = await api(app).get(`/wallets/${walletId}/trades`);
     expect(tradesRes.body).toHaveLength(0);
   });
 
@@ -112,10 +130,10 @@ describe('engine API', () => {
     // whatever it was when the wallet was added and drifted from reality
     // with every subsequent trade.
     const app = buildApp();
-    const createRes = await request(app).post('/wallets').send({ address: 'Addr1', label: 'Test' });
+    const createRes = await api(app).post('/wallets').send({ address: 'Addr1', label: 'Test' });
     const walletId = createRes.body.id;
 
-    await request(app)
+    await api(app)
       .post('/webhooks/helius')
       .set('Authorization', WEBHOOK_SECRET)
       .send([
@@ -128,7 +146,7 @@ describe('engine API', () => {
         },
       ]);
 
-    await request(app)
+    await api(app)
       .post('/webhooks/helius')
       .set('Authorization', WEBHOOK_SECRET)
       .send([
@@ -141,7 +159,7 @@ describe('engine API', () => {
         },
       ]);
 
-    const pnlRes = await request(app).get(`/wallets/${walletId}/pnl`);
+    const pnlRes = await api(app).get(`/wallets/${walletId}/pnl`);
     expect(pnlRes.status).toBe(200);
     expect(pnlRes.body).toHaveLength(1);
     expect(pnlRes.body[0].realizedPnlSol).toBeCloseTo(1); // bought for 2, sold for 3
@@ -160,9 +178,9 @@ describe('engine API', () => {
     const walletMonitor = new WalletMonitor(failingDb, helius, alertBus);
     const pnlTracker = new PnlTracker(db, helius);
     const solanaRpc = { getBalanceSol: vi.fn() };
-    const app = createServer(db, walletMonitor, pnlTracker, alertBus, solanaRpc, WEBHOOK_SECRET);
+    const app = createServer(db, walletMonitor, pnlTracker, alertBus, solanaRpc, WEBHOOK_SECRET, API_KEY);
 
-    const res = await request(app)
+    const res = await api(app)
       .post('/webhooks/helius')
       .set('Authorization', WEBHOOK_SECRET)
       .send([{ signature: 'sig1', timestamp: 1_735_000_000, type: 'SWAP', tokenTransfers: [], nativeTransfers: [] }]);
@@ -173,20 +191,20 @@ describe('engine API', () => {
 
   it('GET /wallets/:id/pnl returns the daily PnL rows', async () => {
     const app = buildApp();
-    const createRes = await request(app).post('/wallets').send({ address: 'Addr1', label: 'Test' });
+    const createRes = await api(app).post('/wallets').send({ address: 'Addr1', label: 'Test' });
     const walletId = createRes.body.id;
 
-    const res = await request(app).get(`/wallets/${walletId}/pnl`);
+    const res = await api(app).get(`/wallets/${walletId}/pnl`);
     expect(res.status).toBe(200);
     expect(res.body).toEqual([]);
   });
 
   it('GET /wallets/:id/balance returns the live SOL balance', async () => {
     const app = buildApp();
-    const createRes = await request(app).post('/wallets').send({ address: 'Addr1', label: 'Test' });
+    const createRes = await api(app).post('/wallets').send({ address: 'Addr1', label: 'Test' });
     const walletId = createRes.body.id;
 
-    const res = await request(app).get(`/wallets/${walletId}/balance`);
+    const res = await api(app).get(`/wallets/${walletId}/balance`);
 
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ walletId, sol: 4.2 });
@@ -194,7 +212,7 @@ describe('engine API', () => {
 
   it('GET /wallets/:id/balance returns 404 for an unknown wallet', async () => {
     const app = buildApp();
-    const res = await request(app).get('/wallets/4242/balance');
+    const res = await api(app).get('/wallets/4242/balance');
     expect(res.status).toBe(404);
     expect(res.body.error).toBe('wallet not found');
   });
@@ -207,7 +225,7 @@ describe('engine API', () => {
     const app = buildApp();
 
     for (const path of ['/wallets/abc/trades', '/wallets/abc/pnl']) {
-      const res = await request(app).get(path);
+      const res = await api(app).get(path);
       expect(res.status).toBe(400);
       expect(res.body.error).toMatch(/positive integer/);
     }
@@ -226,10 +244,11 @@ describe('engine API', () => {
       new PnlTracker(db, helius),
       alertBus,
       solanaRpc,
-      WEBHOOK_SECRET
+      WEBHOOK_SECRET,
+      API_KEY
     );
 
-    const res = await request(app).post('/wallets').send({ address: 'Addr1', label: 'Test' });
+    const res = await api(app).post('/wallets').send({ address: 'Addr1', label: 'Test' });
 
     expect(res.status).toBe(500);
     expect(res.body.error).toBe('internal error');
@@ -237,13 +256,13 @@ describe('engine API', () => {
 
   it('DELETE /wallets/:id removes the wallet and releases its Helius webhook', async () => {
     const app = buildApp();
-    const createRes = await request(app).post('/wallets').send({ address: 'Addr1', label: 'Test' });
+    const createRes = await api(app).post('/wallets').send({ address: 'Addr1', label: 'Test' });
     const walletId = createRes.body.id;
 
-    const delRes = await request(app).delete(`/wallets/${walletId}`);
+    const delRes = await api(app).delete(`/wallets/${walletId}`);
     expect(delRes.status).toBe(204);
 
-    const listRes = await request(app).get('/wallets');
+    const listRes = await api(app).get('/wallets');
     expect(listRes.body).toHaveLength(0);
   });
 
@@ -252,10 +271,10 @@ describe('engine API', () => {
     // deleting the parent row first is a FK violation. This is the regression
     // guard: a wallet is only untrackable in practice once it has history.
     const app = buildApp();
-    const createRes = await request(app).post('/wallets').send({ address: 'Addr1', label: 'Test' });
+    const createRes = await api(app).post('/wallets').send({ address: 'Addr1', label: 'Test' });
     const walletId = createRes.body.id;
 
-    await request(app)
+    await api(app)
       .post('/webhooks/helius')
       .set('Authorization', WEBHOOK_SECRET)
       .send([
@@ -268,29 +287,29 @@ describe('engine API', () => {
         },
       ]);
 
-    const tradesRes = await request(app).get(`/wallets/${walletId}/trades`);
+    const tradesRes = await api(app).get(`/wallets/${walletId}/trades`);
     expect(tradesRes.body.length).toBeGreaterThan(0);
 
-    const delRes = await request(app).delete(`/wallets/${walletId}`);
+    const delRes = await api(app).delete(`/wallets/${walletId}`);
     expect(delRes.status).toBe(204);
   });
 
   it('DELETE /wallets/:id returns 404 for an unknown wallet', async () => {
     const app = buildApp();
-    const res = await request(app).delete('/wallets/9999');
+    const res = await api(app).delete('/wallets/9999');
     expect(res.status).toBe(404);
   });
 
   it('PUT /discord/guilds/:id stores a guild config and GET lists it', async () => {
     const app = buildApp();
 
-    const putRes = await request(app)
+    const putRes = await api(app)
       .put('/discord/guilds/111111111111111111')
       .send({ alertChannelId: 'channel1', setupBy: 'user1' });
     expect(putRes.status).toBe(200);
     expect(putRes.body.alertChannelId).toBe('channel1');
 
-    const listRes = await request(app).get('/discord/guilds');
+    const listRes = await api(app).get('/discord/guilds');
     expect(listRes.body).toHaveLength(1);
     expect(listRes.body[0].guildId).toBe('111111111111111111');
   });
@@ -299,31 +318,31 @@ describe('engine API', () => {
     // Re-running /setup is normal, not an error case.
     const app = buildApp();
 
-    await request(app).put('/discord/guilds/111111111111111111').send({ alertChannelId: 'channel1' });
-    const second = await request(app).put('/discord/guilds/111111111111111111').send({ alertChannelId: 'channel2' });
+    await api(app).put('/discord/guilds/111111111111111111').send({ alertChannelId: 'channel1' });
+    const second = await api(app).put('/discord/guilds/111111111111111111').send({ alertChannelId: 'channel2' });
 
     expect(second.status).toBe(200);
-    const listRes = await request(app).get('/discord/guilds');
+    const listRes = await api(app).get('/discord/guilds');
     expect(listRes.body).toHaveLength(1);
     expect(listRes.body[0].alertChannelId).toBe('channel2');
   });
 
   it('PUT /discord/guilds/:id without a channel returns 400', async () => {
     const app = buildApp();
-    const res = await request(app).put('/discord/guilds/111111111111111111').send({});
+    const res = await api(app).put('/discord/guilds/111111111111111111').send({});
     expect(res.status).toBe(400);
   });
 
   it('DELETE /discord/guilds/:id removes the config and is idempotent', async () => {
     const app = buildApp();
-    await request(app).put('/discord/guilds/111111111111111111').send({ alertChannelId: 'channel1' });
+    await api(app).put('/discord/guilds/111111111111111111').send({ alertChannelId: 'channel1' });
 
-    expect((await request(app).delete('/discord/guilds/111111111111111111')).status).toBe(204);
+    expect((await api(app).delete('/discord/guilds/111111111111111111')).status).toBe(204);
     // Deleting again must still succeed: the bot calls this when it is removed
     // from a server, and Discord can deliver that event more than once.
-    expect((await request(app).delete('/discord/guilds/111111111111111111')).status).toBe(204);
+    expect((await api(app).delete('/discord/guilds/111111111111111111')).status).toBe(204);
 
-    const listRes = await request(app).get('/discord/guilds');
+    const listRes = await api(app).get('/discord/guilds');
     expect(listRes.body).toHaveLength(0);
   });
 
@@ -331,7 +350,62 @@ describe('engine API', () => {
     // The guild id is a primary key on an unauthenticated route; junk must not
     // reach the table.
     const app = buildApp();
-    const res = await request(app).put('/discord/guilds/not-a-snowflake').send({ alertChannelId: 'c1' });
+    const res = await api(app).put('/discord/guilds/not-a-snowflake').send({ alertChannelId: 'c1' });
     expect(res.status).toBe(400);
+  });
+
+  it('rejects an unauthenticated request to a data route', async () => {
+    // The engine is exposed publicly so Helius can reach /webhooks/helius.
+    // Without this gate, anyone who found that URL could read every tracked
+    // wallet, delete trade history, or repoint a server's alert routing.
+    const app = buildApp();
+    const res = await request(app).get('/wallets');
+    expect(res.status).toBe(401);
+  });
+
+  it('rejects a wrong API key', async () => {
+    const app = buildApp();
+    const res = await request(app).get('/wallets').set('Authorization', 'Bearer wrong-key');
+    expect(res.status).toBe(401);
+  });
+
+  it('rejects a destructive request with no credentials', async () => {
+    // DELETE removes trade rows that live-webhook delivery cannot rebuild.
+    const app = buildApp();
+    expect((await request(app).delete('/wallets/1')).status).toBe(401);
+    expect((await request(app).put('/discord/guilds/111111111111111111').send({ alertChannelId: 'c1' })).status).toBe(401);
+  });
+
+  it('still accepts a genuine Helius delivery without the API key', async () => {
+    // Helius only knows the webhook secret, never the engine API key, so that
+    // route must stay reachable with webhook auth alone.
+    const app = buildApp();
+    await api(app).post('/wallets').send({ address: 'Addr1', label: 'Test' });
+
+    const res = await request(app)
+      .post('/webhooks/helius')
+      .set('Authorization', WEBHOOK_SECRET)
+      .send([]);
+
+    expect(res.status).not.toBe(401);
+  });
+
+  it('refuses to start with an empty API key', async () => {
+    // Two zero-length buffers compare equal, so an empty key would make
+    // `Authorization: Bearer ` authenticate every request. That must be a
+    // startup failure, never a silently open API.
+    const alertBus = new AlertBus();
+    const helius = { createWalletWebhook: vi.fn(), getTransactionHistory: vi.fn(), deleteWalletWebhook: vi.fn() } as any;
+    expect(() =>
+      createServer(
+        db,
+        new WalletMonitor(db, helius, alertBus),
+        new PnlTracker(db, helius),
+        alertBus,
+        { getBalanceSol: vi.fn() },
+        WEBHOOK_SECRET,
+        ''
+      )
+    ).toThrow('non-empty apiKey');
   });
 });

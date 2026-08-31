@@ -20,7 +20,7 @@ async function main() {
   const walletMonitor = new WalletMonitor(db, helius, alertBus);
   const pnlTracker = new PnlTracker(db, helius);
 
-  const app = createServer(db, walletMonitor, pnlTracker, alertBus, solanaRpc, env.webhookSecret);
+  const app = createServer(db, walletMonitor, pnlTracker, alertBus, solanaRpc, env.webhookSecret, env.apiKey);
   const server = app.listen(env.port, () => {
     console.log(`cryptonix engine listening on :${env.port}`);
   });

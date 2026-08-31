@@ -32,12 +32,16 @@ export class EngineError extends Error {
 }
 
 export class EngineClient {
-  constructor(private baseUrl: string) {}
+  constructor(private baseUrl: string, private apiKey: string) {}
 
   private async request(path: string, init?: RequestInit): Promise<Response> {
     let res: Response;
     try {
-      res = await fetch(`${this.baseUrl}${path}`, init);
+      // Every engine route except /webhooks/helius requires this key.
+      res = await fetch(`${this.baseUrl}${path}`, {
+        ...init,
+        headers: { ...(init?.headers ?? {}), Authorization: `Bearer ${this.apiKey}` },
+      });
     } catch (err) {
       throw new EngineError(`engine unreachable: ${(err as Error).message}`, 0);
     }
