@@ -155,4 +155,54 @@ describe('HeliusClient', () => {
 
     expect(slept).toContain(3000);
   });
+
+  it('does not retry a webhook CREATE on a 5xx', async () => {
+    // Creating is not idempotent. Helius may have created the webhook and
+    // failed on the way back; retrying would create a second one whose id we
+    // never learn, orphaning the first against the free-tier address cap.
+    const fetchMock = fetch as ReturnType<typeof vi.fn>;
+    fetchMock.mockResolvedValue({ ok: false, status: 503, headers: { get: () => null }, text: async () => 'unavailable' });
+    const client = new HeliusClient({ apiKey: 'key1', webhookBaseUrl: 'https://e.com', webhookSecret: 's', clock: instantClock });
+
+    await expect(client.createWalletWebhook('Addr1')).rejects.toThrow('Helius webhook create failed');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('still retries a webhook CREATE on a 429', async () => {
+    // Rate-limited means it was not performed, so retrying cannot duplicate.
+    const fetchMock = fetch as ReturnType<typeof vi.fn>;
+    fetchMock
+      .mockResolvedValueOnce({ ok: false, status: 429, headers: { get: () => null }, text: async () => 'slow down' })
+      .mockResolvedValueOnce({ ok: true, status: 200, headers: { get: () => null }, json: async () => ({ webhookID: 'wh_9' }) });
+    const client = new HeliusClient({ apiKey: 'key1', webhookBaseUrl: 'https://e.com', webhookSecret: 's', clock: instantClock });
+
+    expect(await client.createWalletWebhook('Addr1')).toBe('wh_9');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('redacts our secrets out of upstream error text', async () => {
+    // The create request body carries authHeader: WEBHOOK_SECRET. An upstream
+    // error that echoes the payload would otherwise carry that secret into a
+    // 502 body and on into a public Discord reply.
+    const fetchMock = fetch as ReturnType<typeof vi.fn>;
+    fetchMock.mockResolvedValue({
+      ok: false,
+      status: 400,
+      headers: { get: () => null },
+      text: async () => 'rejected payload {"authHeader":"super-secret-value","key":"my-api-key"}',
+    });
+    const client = new HeliusClient({
+      apiKey: 'my-api-key',
+      webhookBaseUrl: 'https://e.com',
+      webhookSecret: 'super-secret-value',
+      clock: instantClock,
+    });
+
+    const error = await client.createWalletWebhook('Addr1').catch((e) => e);
+
+    expect(error.message).not.toContain('super-secret-value');
+    expect(error.message).not.toContain('my-api-key');
+    expect(error.message).toContain('[redacted: webhook secret]');
+    expect(error.message).toContain('[redacted: api key]');
+  });
 });

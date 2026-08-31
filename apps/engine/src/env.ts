@@ -51,12 +51,28 @@ export const env = {
 // otherwise only shows up as a failed /track much later. Say so at startup.
 const webhookHost = (() => {
   try {
-    return new URL(env.webhookBaseUrl).hostname;
+    // URL.hostname keeps the brackets on an IPv6 literal ('[::1]'), so strip
+    // them before matching or the loopback case never fires.
+    return new URL(env.webhookBaseUrl).hostname.replace(/^\[|\]$/g, '');
   } catch {
     return '';
   }
 })();
-if (/^(localhost|127\.|0\.0\.0\.0|::1|192\.168\.|10\.)/.test(webhookHost)) {
+
+/** RFC1918 and friends: addresses Helius cannot route to from the internet. */
+function isUnreachableFromInternet(host: string): boolean {
+  if (host === 'localhost' || host === '::1' || host === '0.0.0.0') return true;
+  if (/^127\./.test(host)) return true;
+  if (/^10\./.test(host)) return true;
+  if (/^192\.168\./.test(host)) return true;
+  if (/^169\.254\./.test(host)) return true; // link-local
+  // 172.16.0.0/12 is 172.16 through 172.31, not all of 172.
+  const match = /^172\.(\d{1,3})\./.exec(host);
+  if (match && Number(match[1]) >= 16 && Number(match[1]) <= 31) return true;
+  return false;
+}
+
+if (isUnreachableFromInternet(webhookHost)) {
   console.warn(
     `WEBHOOK_BASE_URL points at ${webhookHost}, which Helius cannot reach. ` +
       'Wallet registration will fail until it is a public URL (e.g. run `ngrok http 8787` and use that https URL).'

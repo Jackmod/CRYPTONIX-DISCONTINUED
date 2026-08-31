@@ -52,6 +52,22 @@ export class HeliusClient {
   }
 
   /**
+   * Strips our own secrets out of upstream text before it can escape.
+   *
+   * The webhook-create request body carries `authHeader: WEBHOOK_SECRET`, and
+   * an upstream error that echoes the payload would otherwise travel through
+   * HeliusError into a 502 body and out into a Discord reply, publishing the
+   * secret that protects /webhooks/helius to everyone in the channel.
+   */
+  private redact(text: string): string {
+    let out = text.split(this.config.apiKey).join('[redacted: api key]');
+    if (this.config.webhookSecret) {
+      out = out.split(this.config.webhookSecret).join('[redacted: webhook secret]');
+    }
+    return out;
+  }
+
+  /**
    * Every Helius call goes through here: rate-limited on the way out, and
    * retried on 429 and 5xx on the way back.
    *
@@ -60,12 +76,21 @@ export class HeliusClient {
    * history and no signal that anything was missing — and there is no
    * re-backfill path, so those trades were simply gone.
    */
-  private async fetchWithRetry(url: string, init?: RequestInit): Promise<Response> {
+  private async fetchWithRetry(
+    url: string,
+    init?: RequestInit,
+    { retryOnServerError = true }: { retryOnServerError?: boolean } = {}
+  ): Promise<Response> {
     for (let attempt = 0; ; attempt++) {
       await this.limiter.acquire();
       const res = await fetch(url, init);
 
-      const retryable = res.status === 429 || res.status >= 500;
+      // A 429 is always safe to retry: rate-limited means it was not performed.
+      // A 5xx is not, for a non-idempotent call — Helius may have created the
+      // webhook and failed on the way back, and retrying would create a second
+      // one whose id we never learn, orphaning the first against the free-tier
+      // address cap. Reads and deletes are idempotent and opt back in.
+      const retryable = res.status === 429 || (retryOnServerError && res.status >= 500);
       if (!retryable || attempt >= MAX_RETRIES) return res;
 
       // Helius sends Retry-After on 429; honour it rather than guessing.
@@ -79,18 +104,25 @@ export class HeliusClient {
   }
 
   async createWalletWebhook(address: string): Promise<string> {
-    const res = await this.fetchWithRetry(`${HELIUS_BASE}/webhooks?api-key=${this.config.apiKey}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        webhookURL: `${this.config.webhookBaseUrl}/webhooks/helius`,
-        transactionTypes: ['SWAP'],
-        accountAddresses: [address],
-        webhookType: 'enhanced',
-        authHeader: this.config.webhookSecret,
-      }),
-    });
-    if (!res.ok) throw new HeliusError(`Helius webhook create failed: ${await res.text()}`, res.status);
+    const res = await this.fetchWithRetry(
+      `${HELIUS_BASE}/webhooks?api-key=${this.config.apiKey}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          webhookURL: `${this.config.webhookBaseUrl}/webhooks/helius`,
+          transactionTypes: ['SWAP'],
+          accountAddresses: [address],
+          webhookType: 'enhanced',
+          authHeader: this.config.webhookSecret,
+        }),
+      },
+      // Creating a webhook is not idempotent: on a 5xx Helius may have created
+      // it and failed on the way back, and a retry would create a second one
+      // whose id we never learn — orphaning the first against the address cap.
+      { retryOnServerError: false }
+    );
+    if (!res.ok) throw new HeliusError(`Helius webhook create failed: ${this.redact(await res.text())}`, res.status);
     const data = (await res.json()) as { webhookID: string };
     return data.webhookID;
   }
@@ -107,7 +139,7 @@ export class HeliusClient {
       method: 'DELETE',
     });
     if (res.status === 404) return;
-    if (!res.ok) throw new HeliusError(`Helius webhook delete failed: ${await res.text()}`, res.status);
+    if (!res.ok) throw new HeliusError(`Helius webhook delete failed: ${this.redact(await res.text())}`, res.status);
   }
 
   async getTransactionHistory(address: string, before?: string): Promise<HeliusEnhancedTransaction[]> {
@@ -117,7 +149,7 @@ export class HeliusClient {
     if (before) url.searchParams.set('before', before);
 
     const res = await this.fetchWithRetry(url.toString());
-    if (!res.ok) throw new HeliusError(`Helius history fetch failed: ${await res.text()}`, res.status);
+    if (!res.ok) throw new HeliusError(`Helius history fetch failed: ${this.redact(await res.text())}`, res.status);
     return res.json() as Promise<HeliusEnhancedTransaction[]>;
   }
 }

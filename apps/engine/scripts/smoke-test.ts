@@ -145,8 +145,14 @@ async function main() {
     // Must be a real base58 pubkey: POST /wallets validates the address before
     // registering a webhook, so a placeholder like 'SmokeTestWallet111' (the
     // 'l' is not in the base58 alphabet) is rejected with 400 every time.
-    // Wrapped SOL is a stable, well-known mainnet address.
-    const SMOKE_ADDRESS = 'So11111111111111111111111111111111111111112';
+    //
+    // Deliberately NOT a well-known address. This registers a live Helius
+    // `enhanced`/SWAP webhook, so pointing it at something busy (wrapped SOL,
+    // say) would have Helius flood /webhooks/helius indefinitely and make
+    // every run backfill 20 pages of that account's history. This is
+    // PublicKey(Buffer.alloc(32, 7)) — structurally valid, and an account
+    // nobody holds the key to, so it never trades.
+    const SMOKE_ADDRESS = 'US517G5965aydkZ46HS38QLi7UQiSojurfbQfKCELFx';
 
     let { status, body } = await createWalletViaApi(SMOKE_ADDRESS, 'Smoke Test Wallet');
 
@@ -154,7 +160,15 @@ async function main() {
       // Left over from a previous run. Untrack and retry so the script is
       // repeatable rather than passing only against a clean database.
       console.log('   Already tracked from an earlier run; untracking and retrying...');
-      await fetch(`${BASE}/wallets/${body.wallet.id}`, { method: 'DELETE', headers: authed });
+      const cleanup = await fetch(`${BASE}/wallets/${body.wallet.id}`, { method: 'DELETE', headers: authed });
+      if (!cleanup.ok) {
+        // Silently ignoring this would land us back in the generic branch
+        // below, reporting a cleanup failure as a missing HELIUS_API_KEY.
+        console.log(`\nFAILED: could not remove the leftover wallet (DELETE returned ${cleanup.status}).`);
+        console.log('   Remove it by hand, or re-run with --skip-helius.');
+        ws.close();
+        process.exit(1);
+      }
       ({ status, body } = await createWalletViaApi(SMOKE_ADDRESS, 'Smoke Test Wallet'));
     }
 
@@ -224,6 +238,18 @@ async function main() {
   const trades = await tradesRes.json();
   console.log('   Trades:', trades);
   if (trades.length !== 1) throw new Error('Expected exactly 1 trade');
+
+  // Clean up after ourselves. On the non-skip path this wallet holds a live
+  // Helius webhook against the free tier's address cap; leaving it behind
+  // means every run permanently consumes another slot.
+  console.log('5. Untracking the smoke-test wallet...');
+  const cleanup = await fetch(`${BASE}/wallets/${wallet.id}`, { method: 'DELETE', headers: authed });
+  if (cleanup.ok) {
+    console.log('   Removed, and its Helius webhook released.');
+  } else {
+    console.log(`   WARNING: cleanup returned ${cleanup.status}. Wallet ${wallet.id} is still tracked.`);
+    if (!SKIP_HELIUS) console.log('   It still holds a Helius webhook address slot - remove it by hand.');
+  }
 
   console.log('\nSmoke test passed.' + (SKIP_HELIUS ? ' (--skip-helius: wallet registration itself was NOT exercised)' : ''));
   ws.close();
