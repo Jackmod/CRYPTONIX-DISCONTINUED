@@ -55,4 +55,36 @@ describe('HeliusClient', () => {
 
     expect(history).toEqual([{ signature: 'sig1' }]);
   });
+
+  it('deletes a webhook by id', async () => {
+    (fetch as ReturnType<typeof vi.fn>).mockResolvedValue({ ok: true, status: 200, json: async () => ({}) });
+    const client = new HeliusClient({ apiKey: 'key1', webhookBaseUrl: 'https://example.com', webhookSecret: 'secret1' });
+
+    await client.deleteWalletWebhook('wh_123');
+
+    const [url, options] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(url).toContain('/webhooks/wh_123?api-key=key1');
+    expect(options.method).toBe('DELETE');
+  });
+
+  it('treats a 404 as already deleted rather than an error', async () => {
+    // Untracking must stay idempotent: if the webhook is already gone (deleted
+    // by hand in the Helius dashboard, or a retried request), the wallet row
+    // still has to be removable. Throwing here would strand the wallet as
+    // permanently un-untrackable.
+    (fetch as ReturnType<typeof vi.fn>).mockResolvedValue({ ok: false, status: 404, text: async () => 'not found' });
+    const client = new HeliusClient({ apiKey: 'key1', webhookBaseUrl: 'https://example.com', webhookSecret: 'secret1' });
+
+    await expect(client.deleteWalletWebhook('wh_gone')).resolves.toBeUndefined();
+  });
+
+  it('throws when webhook deletion fails for any other reason', async () => {
+    // A 500 or a rate-limit must NOT be swallowed. If we deleted the wallet row
+    // anyway, the webhook would keep firing forever against a wallet we no
+    // longer know about, burning the free-tier address cap with no way to find it.
+    (fetch as ReturnType<typeof vi.fn>).mockResolvedValue({ ok: false, status: 500, text: async () => 'server error' });
+    const client = new HeliusClient({ apiKey: 'key1', webhookBaseUrl: 'https://example.com', webhookSecret: 'secret1' });
+
+    await expect(client.deleteWalletWebhook('wh_123')).rejects.toThrow('Helius webhook delete failed');
+  });
 });

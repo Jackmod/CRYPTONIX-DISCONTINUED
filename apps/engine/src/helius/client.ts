@@ -35,6 +35,21 @@ export class HeliusClient {
     return data.webhookID;
   }
 
+  /**
+   * Hands a webhook address back to the free-tier pool. A 404 means it is
+   * already gone, which is a success for our purposes — untracking has to be
+   * idempotent. Any other failure throws, because silently dropping the wallet
+   * row while leaving a live webhook behind would leak the address cap with no
+   * record of what is holding it (spec §7).
+   */
+  async deleteWalletWebhook(webhookId: string): Promise<void> {
+    const res = await fetch(`${HELIUS_BASE}/webhooks/${webhookId}?api-key=${this.config.apiKey}`, {
+      method: 'DELETE',
+    });
+    if (res.status === 404) return;
+    if (!res.ok) throw new Error(`Helius webhook delete failed: ${res.status} ${await res.text()}`);
+  }
+
   async getTransactionHistory(address: string, before?: string): Promise<HeliusEnhancedTransaction[]> {
     const url = new URL(`${HELIUS_BASE}/addresses/${address}/transactions`);
     url.searchParams.set('api-key', this.config.apiKey);
