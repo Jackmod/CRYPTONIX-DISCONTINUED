@@ -18,6 +18,7 @@
 - Each monitor/module is isolated and independently testable; no god-files — one clear responsibility per file (spec §8, §9).
 - PnL is computed natively in SOL via FIFO cost-basis matching, not per-token USD feeds (spec §5.1, §6).
 - Full historical backfill runs whenever a wallet (tracked or `is_mine`) is added (spec §5.1, user decision).
+- Every package uses `"module": "NodeNext"` (set in the root `tsconfig.base.json`). In this mode, TypeScript requires an explicit `.js` extension on every *relative* import in a non-test source file (e.g. `from './client.js'`, `from '../helius/client.js'`) — even though the real file on disk is `.ts` — because that's the extension Node's ESM loader needs at runtime against the compiled output. This applies to every relative import in every task from here on. It does NOT apply to: imports from a package name (`@cryptonix/core`, `drizzle-orm`, `express`, etc.), or relative imports inside `*.test.ts` files (vitest's own transform resolves those without extensions, and test files are excluded from the `tsc` build entirely).
 
 ---
 
@@ -402,7 +403,7 @@ Expected: FAIL — `parse-swap.ts` does not exist.
 
 `packages/core/src/wallet-parsing/parse-swap.ts`:
 ```ts
-import type { HeliusEnhancedTransaction, ParsedSwap } from './types';
+import type { HeliusEnhancedTransaction, ParsedSwap } from './types.js';
 
 const LAMPORTS_PER_SOL = 1_000_000_000;
 
@@ -443,7 +444,7 @@ export function parseSwap(tx: HeliusEnhancedTransaction, walletAddress: string):
   return null;
 }
 
-export type { HeliusEnhancedTransaction, HeliusTokenTransfer, HeliusNativeTransfer, ParsedSwap } from './types';
+export type { HeliusEnhancedTransaction, HeliusTokenTransfer, HeliusNativeTransfer, ParsedSwap } from './types.js';
 ```
 
 - [ ] **Step 5: Run and confirm it passes**
@@ -571,9 +572,9 @@ Expected: PASS, all 4 tests.
 
 `packages/core/src/index.ts`:
 ```ts
-export * from './axiom-links/build-link';
-export * from './wallet-parsing/parse-swap'; // re-exports the ./wallet-parsing/types too
-export * from './pnl/fifo';
+export * from './axiom-links/build-link.js';
+export * from './wallet-parsing/parse-swap.js'; // re-exports the ./wallet-parsing/types too
+export * from './pnl/fifo.js';
 ```
 
 - [ ] **Step 6: Build and commit**
@@ -699,7 +700,7 @@ export const alerts = pgTable('alerts', {
 ```ts
 import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { Pool } from 'pg';
-import * as schema from './schema';
+import * as schema from './schema.js';
 
 export function createDb(connectionString: string) {
   const pool = new Pool({ connectionString });
@@ -711,8 +712,8 @@ export type Db = NodePgDatabase<typeof schema>;
 
 `packages/db/src/index.ts`:
 ```ts
-export * from './schema';
-export * from './client';
+export * from './schema.js';
+export * from './client.js';
 ```
 
 - [ ] **Step 4: Configure Drizzle Kit and generate the migration**
@@ -1132,8 +1133,8 @@ Expected: FAIL — `wallet-monitor.ts` does not exist.
 import type { Db } from '@cryptonix/db';
 import { wallets, walletTrades, alerts } from '@cryptonix/db';
 import { parseSwap, buildAxiomLink, type HeliusEnhancedTransaction } from '@cryptonix/core';
-import type { HeliusClient } from '../helius/client';
-import type { AlertBus } from '../api/alert-bus';
+import type { HeliusClient } from '../helius/client.js';
+import type { AlertBus } from '../api/alert-bus.js';
 
 export class WalletMonitor {
   constructor(private db: Db, private helius: Pick<HeliusClient, 'createWalletWebhook'>, private alertBus: AlertBus) {}
@@ -1311,7 +1312,7 @@ import { eq } from 'drizzle-orm';
 import type { Db } from '@cryptonix/db';
 import { walletTrades, pnlDaily } from '@cryptonix/db';
 import { parseSwap, applyFifo, type Lot, type HeliusEnhancedTransaction } from '@cryptonix/core';
-import type { HeliusClient } from '../helius/client';
+import type { HeliusClient } from '../helius/client.js';
 
 const MAX_BACKFILL_PAGES = 20;
 
@@ -1522,9 +1523,9 @@ import { eq } from 'drizzle-orm';
 import type { Db } from '@cryptonix/db';
 import { wallets, walletTrades, pnlDaily } from '@cryptonix/db';
 import type { HeliusEnhancedTransaction } from '@cryptonix/core';
-import type { WalletMonitor } from '../monitors/wallet-monitor';
-import type { PnlTracker } from '../monitors/pnl-tracker';
-import type { AlertBus } from './alert-bus';
+import type { WalletMonitor } from '../monitors/wallet-monitor.js';
+import type { PnlTracker } from '../monitors/pnl-tracker.js';
+import type { AlertBus } from './alert-bus.js';
 
 export function createServer(db: Db, walletMonitor: WalletMonitor, pnlTracker: PnlTracker, _alertBus: AlertBus): Express {
   const app = express();
@@ -1574,7 +1575,7 @@ export function createServer(db: Db, walletMonitor: WalletMonitor, pnlTracker: P
 ```ts
 import { WebSocketServer } from 'ws';
 import type { Server } from 'node:http';
-import type { AlertBus } from './alert-bus';
+import type { AlertBus } from './alert-bus.js';
 
 export function attachWebSocket(server: Server, alertBus: AlertBus): WebSocketServer {
   const wss = new WebSocketServer({ server, path: '/ws' });
@@ -1678,7 +1679,7 @@ export class SolanaRpcClient {
 Modify `apps/engine/src/api/server.ts` — add the import and change the function signature and body:
 
 ```ts
-import type { SolanaRpcClient } from '../solana/balance';
+import type { SolanaRpcClient } from '../solana/balance.js';
 ```
 
 Change the signature:
@@ -1768,14 +1769,14 @@ git commit -m "engine: add live SOL balance endpoint"
 `apps/engine/src/index.ts`:
 ```ts
 import { createDb } from '@cryptonix/db';
-import { env } from './env';
-import { HeliusClient } from './helius/client';
-import { SolanaRpcClient } from './solana/balance';
-import { AlertBus } from './api/alert-bus';
-import { WalletMonitor } from './monitors/wallet-monitor';
-import { PnlTracker } from './monitors/pnl-tracker';
-import { createServer } from './api/server';
-import { attachWebSocket } from './api/ws';
+import { env } from './env.js';
+import { HeliusClient } from './helius/client.js';
+import { SolanaRpcClient } from './solana/balance.js';
+import { AlertBus } from './api/alert-bus.js';
+import { WalletMonitor } from './monitors/wallet-monitor.js';
+import { PnlTracker } from './monitors/pnl-tracker.js';
+import { createServer } from './api/server.js';
+import { attachWebSocket } from './api/ws.js';
 
 async function main() {
   const db = createDb(env.databaseUrl);
