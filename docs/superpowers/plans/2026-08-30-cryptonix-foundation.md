@@ -1858,18 +1858,25 @@ export function createServer(
 ): Express {
 ```
 
-Add the route (anywhere among the other `/wallets/:id/...` routes):
+Add the route (anywhere among the other `/wallets/:id/...` routes). Note it
+uses the same `asyncRoute` wrapper and `parseWalletId` validation as every
+other route — this endpoint calls out to a Solana RPC, so an upstream failure
+here must return 500 rather than escaping as an unhandled rejection:
 ```ts
-  app.get('/wallets/:id/balance', async (req, res) => {
-    const walletId = Number(req.params.id);
-    const [wallet] = await db.select().from(wallets).where(eq(wallets.id, walletId));
-    if (!wallet) {
-      res.status(404).json({ error: 'wallet not found' });
-      return;
-    }
-    const sol = await solanaRpc.getBalanceSol(wallet.address);
-    res.json({ walletId, sol });
-  });
+  app.get(
+    '/wallets/:id/balance',
+    asyncRoute(async (req, res) => {
+      const walletId = parseWalletId(req, res);
+      if (walletId === null) return;
+      const [wallet] = await db.select().from(wallets).where(eq(wallets.id, walletId));
+      if (!wallet) {
+        res.status(404).json({ error: 'wallet not found' });
+        return;
+      }
+      const sol = await solanaRpc.getBalanceSol(wallet.address);
+      res.json({ walletId, sol });
+    })
+  );
 ```
 
 - [ ] **Step 6: Update the server test's `buildApp` helper and add a test**
