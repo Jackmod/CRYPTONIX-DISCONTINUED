@@ -20,7 +20,22 @@ async function main() {
   const server = app.listen(env.port, () => {
     console.log(`cryptonix engine listening on :${env.port}`);
   });
-  attachWebSocket(server, alertBus);
+
+  // listen() reports failures (EADDRINUSE, EACCES) asynchronously via an
+  // 'error' event, not as a rejection — so main()'s .catch() never sees them.
+  // Without a listener here, Node rethrows and the process dies on a raw
+  // stack trace instead of a readable message.
+  server.on('error', (err) => {
+    console.error(`engine failed to listen on :${env.port}`, err);
+    process.exit(1);
+  });
+
+  // A websocket-layer failure must not take the whole engine down — wallet
+  // monitoring and the REST API keep working without it (spec §9).
+  const wss = attachWebSocket(server, alertBus);
+  wss.on('error', (err) => {
+    console.error('websocket server error (alerts may be degraded)', err);
+  });
 }
 
 main().catch((err) => {
