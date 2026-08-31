@@ -108,7 +108,14 @@ describe('engine API', () => {
       createWalletWebhook: vi.fn().mockRejectedValue(new Error('helius is down')),
       getTransactionHistory: vi.fn().mockResolvedValue([]),
     } as any;
-    const app = createServer(db, new WalletMonitor(db, helius, alertBus), new PnlTracker(db, helius), alertBus);
+    const solanaRpc = { getBalanceSol: vi.fn().mockResolvedValue(0) };
+    const app = createServer(
+      db,
+      new WalletMonitor(db, helius, alertBus),
+      new PnlTracker(db, helius),
+      alertBus,
+      solanaRpc
+    );
 
     const res = await request(app).post('/wallets').send({ address: 'Addr1', label: 'Test' });
 
