@@ -40,3 +40,10 @@ export const alerts = pgTable('alerts', {
   payload: jsonb('payload').notNull(),
   ts: timestamp('ts').notNull().defaultNow(),
 });
+
+export const discordGuilds = pgTable('discord_guilds', {
+  guildId: text('guild_id').primaryKey(),
+  alertChannelId: text('alert_channel_id').notNull(),
+  setupBy: text('setup_by'),
+  setupAt: timestamp('setup_at').notNull().defaultNow(),
+});
