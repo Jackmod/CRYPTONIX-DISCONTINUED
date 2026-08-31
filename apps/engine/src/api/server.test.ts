@@ -33,7 +33,7 @@ function api(app: Parameters<typeof request>[0]) {
 
 describe('engine API', () => {
   beforeEach(async () => {
-    await db.execute('TRUNCATE alerts, pnl_daily, wallet_trades, wallets, discord_guilds RESTART IDENTITY CASCADE');
+    await db.execute('TRUNCATE alerts, pnl_daily, wallet_trades, wallets, discord_guilds, client_state RESTART IDENTITY CASCADE');
   });
 
   /** Like buildApp, but exposes the mocks so a test can assert on Helius calls. */

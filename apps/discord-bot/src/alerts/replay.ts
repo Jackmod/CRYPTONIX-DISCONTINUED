@@ -42,7 +42,11 @@ export interface AlertReplayOptions {
  *   jump the cursor past ids the walk has not reached, and those are then
  *   unreachable forever.
  * - Live alerts arriving during a catch-up are queued, not posted, then
- *   drained afterwards. That keeps the cursor contiguous and the order sane.
+ *   drained afterwards. That keeps the cursor contiguous. Ordering across a
+ *   reconnect boundary is best-effort: a queued live alert can land ahead of
+ *   an older backlog fetched by a re-run. Delivering each alert exactly once
+ *   and never stepping the cursor over one both still hold, and those are the
+ *   properties worth machinery.
  * - `start` must be called with a real head before anything is delivered.
  *   Beginning at 0 replays the entire alert history into live channels.
  */
@@ -166,73 +170,94 @@ export class AlertReplay {
     this.backlogClear = false;
     let posted = 0;
     try {
-      // The walk position and the durable cursor are deliberately separate.
-      // Walking straight off the cursor meant one deterministically-failing
-      // alert pinned it, the progress check tripped, and the walk stopped --
-      // so everything after that alert was never fetched at all. The walk
-      // keeps moving; the cursor is what stays behind so failures can be
-      // fetched again.
-      let fetchFrom = this.cursor;
-      for (;;) {
-        const page = await this.options.listAlertsSince(fetchFrom);
-        if (page.length === 0) break;
-
-        for (const alert of page) {
-          // Per-alert boundary. One undeliverable alert must not abort the
-          // walk: the cursor would never pass it, so every later reconnect
-          // would refetch the same page and die on the same alert, and
-          // everything behind it would stay undelivered forever.
-          try {
-            // Explicitly does NOT advance the cursor: doing so per-alert leaves
-            // it already equal to the page's highest id, so the progress check
-            // below trips immediately and the walk stops after one page.
-            if (await this.deliverOnce(alert, { advanceCursor: false })) posted++;
-          } catch (err) {
-            console.error(`could not deliver alert ${alert.id}; skipping it`, err);
-          }
+      // Walk AND drain both sit inside the re-run loop.
+      //
+      // The walk goes first because a reconnect's backlog is older than
+      // anything queued live, and draining first put alerts into Discord out
+      // of order. The drain is inside the loop because a reconnect landing
+      // during the drain would otherwise set the flag after the loop had
+      // already exited, and that reconnect's backlog would then wait for some
+      // later one - `stream.onOpen` is the only caller.
+      do {
+        this.rerunRequested = false;
+        try {
+          posted += await this.walkBacklog();
+        } finally {
+          // Even when the walk throws: leaving the queue undrained strands
+          // every live alert behind a transient engine failure.
+          posted += await this.drainQueue();
         }
+      } while (this.rerunRequested);
 
-        const highest = page.reduce((max, alert) => Math.max(max, alert.id), fetchFrom);
-        // No forward progress would spin forever; stop instead.
-        if (highest <= fetchFrom) break;
-        fetchFrom = highest;
-
-        this.advanceCursorTo(highest);
-
-        // A short page means the backlog is exhausted.
-        if (page.length < this.options.pageSize) break;
-      }
       this.backlogClear = true;
     } finally {
-      // In `finally`: a throw from the walk (a failing listAlertsSince, say)
-      // must not strand the live alerts queued behind it, which would
-      // otherwise wait for some future clean catch-up and pile up meanwhile.
-      //
-      // `catchingUp` stays true across the drain and is cleared only after it.
-      // Releasing it first let a reconnect start a second walk that shared the
-      // cursor and re-posted ids already evicted from the de-duplication set.
-      try {
-        // A `while`, not one pass over a snapshot: an alert arriving DURING the
-        // drain lands in the new queue, and with a single pass it sat there
-        // until the next reconnect — the only thing that calls catchUp.
-        while (this.queued.length > 0) {
-          const alert = this.queued.shift()!;
-          try {
-            if (await this.deliverOnce(alert)) posted++;
-          } catch (err) {
-            console.error(`could not deliver queued alert ${alert.id}; will retry on the next walk`, err);
-          }
-        }
-      } finally {
-        this.catchingUp = false;
-      }
+      // Held across walk and drain alike. Releasing it earlier let a reconnect
+      // start a second walk sharing the cursor, re-posting ids already evicted
+      // from the de-duplication set.
+      this.catchingUp = false;
     }
 
-    // A reconnect arrived while this walk was running; its backlog has not
-    // been fetched yet.
-    if (this.rerunRequested) {
-      this.rerunRequested = false;
-      posted += await this.catchUp();
+    return posted;
+  }
+
+  /**
+   * Posts everything queued while a walk was running. Never throws: a single
+   * bad alert must not abort the rest of the queue.
+   */
+  private async drainQueue(): Promise<number> {
+    let posted = 0;
+    // A `while`, not one pass over a snapshot: an alert arriving DURING the
+    // drain lands in the queue too and must go out in this pass.
+    while (this.queued.length > 0) {
+      const alert = this.queued.shift()!;
+      try {
+        if (await this.deliverOnce(alert)) posted++;
+      } catch (err) {
+        console.error(`could not deliver queued alert ${alert.id}; will retry on the next walk`, err);
+      }
+    }
+    return posted;
+  }
+
+  /**
+   * One pass over everything after the cursor. Returns how many it posted.
+   *
+   * The walk position and the durable cursor are deliberately separate.
+   * Walking straight off the cursor meant one deterministically-failing alert
+   * pinned it, the progress check tripped, and the walk stopped — so
+   * everything after that alert was never fetched at all. The walk keeps
+   * moving; the cursor is what stays behind so failures can be fetched again.
+   */
+  private async walkBacklog(): Promise<number> {
+    let posted = 0;
+    let fetchFrom = this.cursor;
+
+    for (;;) {
+      const page = await this.options.listAlertsSince(fetchFrom);
+      if (page.length === 0) break;
+
+      for (const alert of page) {
+        // Per-alert boundary. One undeliverable alert must not abort the walk,
+        // or everything behind it would stay undelivered.
+        try {
+          // Explicitly does NOT advance the cursor: doing so per-alert leaves
+          // it already equal to the page's highest id, so the progress check
+          // below trips immediately and the walk stops after one page.
+          if (await this.deliverOnce(alert, { advanceCursor: false })) posted++;
+        } catch (err) {
+          console.error(`could not deliver alert ${alert.id}; skipping it`, err);
+        }
+      }
+
+      const highest = page.reduce((max, alert) => Math.max(max, alert.id), fetchFrom);
+      // No forward progress would spin forever; stop instead.
+      if (highest <= fetchFrom) break;
+      fetchFrom = highest;
+
+      this.advanceCursorTo(highest);
+
+      // A short page means the backlog is exhausted.
+      if (page.length < this.options.pageSize) break;
     }
 
     return posted;

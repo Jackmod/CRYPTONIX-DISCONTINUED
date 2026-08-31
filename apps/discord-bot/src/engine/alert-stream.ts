@@ -67,6 +67,14 @@ export class AlertStream {
   private readonly heartbeatTimeoutMs: number;
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private pongTimer: ReturnType<typeof setTimeout> | null = null;
+  /**
+   * Incremented by stop(), so a reconnect scheduled before it cannot fire.
+   *
+   * A pending backoff timer survived stop(), and start() cleared `stopped` --
+   * so a stop/start cycle left the old timer free to open a second socket
+   * that nothing referenced or closed.
+   */
+  private generation = 0;
 
   constructor(private options: AlertStreamOptions) {
     this.createSocket =
@@ -104,6 +112,7 @@ export class AlertStream {
 
   stop() {
     this.stopped = true;
+    this.generation++;
     this.stopHeartbeat();
     this.socket?.close();
     this.socket = null;
@@ -213,8 +222,12 @@ export class AlertStream {
       if (this.stopped) return;
       const delay = this.delayMs;
       this.delayMs = Math.min(this.delayMs * 2, this.maxDelayMs);
+      // Captured now: a stop() between scheduling and firing bumps the
+      // generation, and this reconnect must then not happen even if start()
+      // has since cleared `stopped`.
+      const scheduledIn = this.generation;
       this.schedule(() => {
-        if (!this.stopped) this.connect();
+        if (!this.stopped && this.generation === scheduledIn) this.connect();
       }, delay);
     });
   }

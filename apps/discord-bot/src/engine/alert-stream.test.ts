@@ -291,3 +291,22 @@ describe('AlertStream: stale sockets', () => {
     expect(received).toHaveLength(0);
   });
 });
+
+describe('AlertStream: stop cancels pending work', () => {
+  it('does not open a socket from a reconnect scheduled before stop()', async () => {
+    // The backoff timer survived stop(), and start() cleared `stopped` -- so a
+    // stop/start cycle let the stale timer open a second socket that nothing
+    // referenced or closed.
+    const { stream, sockets, runPending } = build();
+    stream.start();
+
+    sockets[0].emit('close'); // a reconnect is now scheduled
+    stream.stop();
+    stream.start(); // fresh socket; the stale timer must not add another
+
+    const socketsAfterRestart = sockets.length;
+    runPending(); // the pre-stop timer fires
+
+    expect(sockets).toHaveLength(socketsAfterRestart);
+  });
+});

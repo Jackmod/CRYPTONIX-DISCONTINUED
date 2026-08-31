@@ -312,17 +312,19 @@ describe('AlertReplay: concurrency', () => {
 
   it('does not start a second walk while the queued drain is still running', async () => {
     // Clearing the re-entrancy guard before the drain let a reconnect begin a
-    // concurrent walk sharing the cursor.
+    // concurrent walk sharing the cursor. It must be refused while one is
+    // running — and honoured afterwards, not dropped.
     let releaseDrain: () => void = () => {};
-    let deliveries = 0;
-    const listAlertsSince = vi.fn(async () => []);
+    let signalDrainStarted: () => void = () => {};
+    const drainStarted = new Promise<void>((resolve) => (signalDrainStarted = resolve));
 
+    const listAlertsSince = vi.fn(async () => []);
     const replay = new AlertReplay({
       listAlertsSince,
       getAlertHead: vi.fn(async () => 0),
       deliver: vi.fn(async () => {
-        deliveries++;
-        if (deliveries === 1) await new Promise<void>((resolve) => (releaseDrain = resolve));
+        signalDrainStarted();
+        await new Promise<void>((resolve) => (releaseDrain = resolve));
       }),
       pageSize: PAGE,
     });
@@ -330,18 +332,16 @@ describe('AlertReplay: concurrency', () => {
 
     const first = replay.catchUp();
     await replay.handleLive(alert(1)); // queued, drained by `first`
-    const callsBefore = listAlertsSince.mock.calls.length;
+    await drainStarted; // the drain is now awaiting inside `first`
 
-    const second = replay.catchUp(); // arrives while the drain is awaiting
-    // Returns immediately rather than walking concurrently...
-    expect(await second).toBe(0);
-    expect(listAlertsSince.mock.calls.length).toBe(callsBefore); // no interleaved fetch
+    const callsBefore = listAlertsSince.mock.calls.length;
+    const second = replay.catchUp();
+    expect(await second).toBe(0); // refused: a walk is still in progress
 
     releaseDrain();
     await first;
 
-    // ...but it is not dropped either: the request is honoured as a re-run
-    // once the first walk finishes, which is exactly one further fetch.
+    // Honoured as one further pass rather than dropped.
     expect(listAlertsSince.mock.calls.length).toBe(callsBefore + 1);
   });
 
@@ -676,5 +676,49 @@ describe('AlertReplay: giving up on a hopeless alert', () => {
     expect(replay.resumeFrom).toBe(3); // given up on; the cursor moved past it
     expect(posted).toEqual([1, 3, 3].slice(0, posted.length));
     expect(deliver.mock.calls.filter((c) => (c[0] as AlertEvent).id === 2)).toHaveLength(2);
+  });
+});
+
+describe('AlertReplay: a pending re-run blocks the cursor', () => {
+  it('does not let a queued live alert step over a pending reconnect backlog', async () => {
+    // Confirmed loss mode: backlogClear was set before the drain even when a
+    // reconnect was already pending, so a queued live alert advanced and
+    // PERSISTED the cursor past ids published during that disconnect. Only
+    // ids above the cursor are ever returned, so they were gone for good.
+    let release: () => void = () => {};
+    const stored = [alert(101)];
+    const posted: number[] = [];
+    const savedCursors: number[] = [];
+
+    const replay = new AlertReplay({
+      listAlertsSince: vi.fn(async (since: number) => stored.filter((a) => a.id > since).slice(0, PAGE)),
+      getAlertHead: vi.fn(async () => 100),
+      deliver: vi.fn(async (a: AlertEvent) => {
+        if (a.id === 101) await new Promise<void>((resolve) => (release = resolve));
+        posted.push(a.id);
+      }),
+      pageSize: PAGE,
+      saveCursor: vi.fn(async (c: number) => {
+        savedCursors.push(c);
+      }),
+    });
+    await replay.start();
+
+    const walking = replay.catchUp();
+    // A reconnect lands mid-walk; 111-115 were published during that gap.
+    await replay.catchUp();
+    stored.push(...[111, 112, 113, 114, 115].map(alert));
+    // ...and a live alert for a LATER id arrives and is queued.
+    const live = replay.handleLive(alert(116));
+
+    release();
+    await Promise.all([walking, live]);
+
+    // Order across a reconnect boundary is best-effort: the queued live alert
+    // may land before the re-run's older backlog. What must hold is that every
+    // alert is delivered exactly once and the cursor never steps over one.
+    expect([...posted].sort((a, b) => a - b)).toEqual([101, 111, 112, 113, 114, 115, 116]);
+    expect(new Set(posted).size).toBe(posted.length);
+    expect(savedCursors.every((c) => c <= 116)).toBe(true);
   });
 });
