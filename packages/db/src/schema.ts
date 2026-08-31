@@ -47,3 +47,18 @@ export const discordGuilds = pgTable('discord_guilds', {
   setupBy: text('setup_by'),
   setupAt: timestamp('setup_at').notNull().defaultNow(),
 });
+
+/**
+ * Small key/value store for consumer state the engine holds on a client's
+ * behalf.
+ *
+ * The Discord bot keeps its alert-replay cursor here. Held only in memory, it
+ * reset to the engine's head on every start, so alerts published while the bot
+ * process was down were never replayed — the one case the replay mechanism
+ * most obviously exists for.
+ */
+export const clientState = pgTable('client_state', {
+  key: text('key').primaryKey(),
+  value: text('value').notNull(),
+  updatedAt: timestamp('updated_at').notNull().defaultNow(),
+});

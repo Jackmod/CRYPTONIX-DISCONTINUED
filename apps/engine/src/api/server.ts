@@ -2,7 +2,7 @@ import express, { type Express, type NextFunction, type Request, type Response }
 import { timingSafeEqual } from 'node:crypto';
 import { desc, eq, gt } from 'drizzle-orm';
 import type { Db } from '@cryptonix/db';
-import { wallets, walletTrades, pnlDaily, discordGuilds, alerts } from '@cryptonix/db';
+import { wallets, walletTrades, pnlDaily, discordGuilds, alerts, clientState } from '@cryptonix/db';
 import type { HeliusEnhancedTransaction } from '@cryptonix/core';
 import type { WalletMonitor } from '../monitors/wallet-monitor.js';
 import type { PnlTracker } from '../monitors/pnl-tracker.js';
@@ -15,6 +15,7 @@ import { HeliusError } from '../helius/client.js';
 const MAX_LABEL_LENGTH = 100;
 /** Cap on a single catch-up page, so a long outage cannot flood a channel. */
 const MAX_ALERT_REPLAY = 50;
+const MAX_STATE_VALUE_LENGTH = 1_000;
 
 /**
  * Express 4 does not forward a rejected promise from an async handler to its
@@ -57,6 +58,20 @@ function parseGuildId(req: Request, res: Response): string | null {
     return null;
   }
   return guildId;
+}
+
+/**
+ * Keys are chosen by clients, so they are bounded and restricted to characters
+ * that cannot be confused with a path segment.
+ */
+function parseStateKey(req: Request, res: Response): string | null {
+  const raw = req.params.key;
+  const key = typeof raw === 'string' ? raw : '';
+  if (!/^[A-Za-z0-9._:-]{1,120}$/.test(key)) {
+    res.status(400).json({ error: 'key must be 1-120 characters of A-Z a-z 0-9 . _ : -' });
+    return null;
+  }
+  return key;
 }
 
 /**
@@ -271,8 +286,12 @@ export function createServer(
       // A repeated query param (?since=1&since=2) arrives as an array. Coercing
       // that to 0 silently returned the 50 OLDEST alerts instead of rejecting
       // it — a caller resuming from there would replay history.
-      const sinceRaw = req.query.since ?? '0';
-      if (typeof sinceRaw !== 'string') {
+      // ?? only covers undefined, so `?since=` (empty value) slipped through
+      // as '' and Number('') is 0 — returning the OLDEST alerts to a caller
+      // that asked to resume, which is exactly the history replay this
+      // validation exists to prevent. A repeated param arrives as an array.
+      const sinceRaw = req.query.since === undefined ? '0' : req.query.since;
+      if (typeof sinceRaw !== 'string' || sinceRaw.trim() === '') {
         res.status(400).json({ error: 'since must be a single non-negative integer' });
         return;
       }
@@ -304,6 +323,43 @@ export function createServer(
     asyncRoute(async (_req, res) => {
       const [newest] = await db.select().from(alerts).orderBy(desc(alerts.id)).limit(1);
       res.json({ id: newest?.id ?? 0 });
+    })
+  );
+
+  /**
+   * Small key/value store for consumer state, so a client can survive its own
+   * restart. The bot keeps its alert-replay cursor here; without it the cursor
+   * reset to the head on every start and alerts published while the bot was
+   * down were never replayed.
+   */
+  app.get(
+    '/state/:key',
+    asyncRoute(async (req, res) => {
+      const key = parseStateKey(req, res);
+      if (key === null) return;
+      const [row] = await db.select().from(clientState).where(eq(clientState.key, key));
+      res.json({ key, value: row?.value ?? null });
+    })
+  );
+
+  app.put(
+    '/state/:key',
+    asyncRoute(async (req, res) => {
+      const key = parseStateKey(req, res);
+      if (key === null) return;
+
+      const { value } = (req.body ?? {}) as { value?: unknown };
+      if (typeof value !== 'string' || value.length > MAX_STATE_VALUE_LENGTH) {
+        res.status(400).json({ error: `value must be a string of at most ${MAX_STATE_VALUE_LENGTH} characters` });
+        return;
+      }
+
+      const [row] = await db
+        .insert(clientState)
+        .values({ key, value })
+        .onConflictDoUpdate({ target: clientState.key, set: { value, updatedAt: new Date() } })
+        .returning();
+      res.json({ key: row.key, value: row.value });
     })
   );
 

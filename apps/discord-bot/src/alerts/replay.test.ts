@@ -333,13 +333,16 @@ describe('AlertReplay: concurrency', () => {
     const callsBefore = listAlertsSince.mock.calls.length;
 
     const second = replay.catchUp(); // arrives while the drain is awaiting
-    expect(await second).toBe(0); // refused: a walk is still in progress
+    // Returns immediately rather than walking concurrently...
+    expect(await second).toBe(0);
+    expect(listAlertsSince.mock.calls.length).toBe(callsBefore); // no interleaved fetch
 
     releaseDrain();
     await first;
-    // Equality, not >=: a >= on a call count can never fail, so it would not
-    // have caught the re-entrancy guard being removed.
-    expect(listAlertsSince.mock.calls.length).toBe(callsBefore);
+
+    // ...but it is not dropped either: the request is honoured as a re-run
+    // once the first walk finishes, which is exactly one further fetch.
+    expect(listAlertsSince.mock.calls.length).toBe(callsBefore + 1);
   });
 
   it('re-delivers an alert whose delivery failed', async () => {
@@ -535,5 +538,143 @@ describe('AlertReplay: a failing alert must not lose or wedge anything', () => {
 
     expect(posted).toContain(3);
     expect(replay.resumeFrom).toBe(12); // nothing outstanding, cursor caught up
+  });
+});
+
+describe('AlertReplay: surviving a restart', () => {
+  it('resumes from the persisted cursor rather than the head', async () => {
+    // Without persistence the cursor reset to the head on every start, so
+    // alerts published while the bot process was DOWN were never replayed --
+    // the case the whole mechanism most obviously exists for.
+    const stored = Array.from({ length: 8 }, (_, i) => alert(i + 1));
+    const posted: number[] = [];
+    const replay = new AlertReplay({
+      listAlertsSince: vi.fn(async (since: number) => stored.filter((a) => a.id > since).slice(0, PAGE)),
+      getAlertHead: vi.fn(async () => 8),
+      deliver: vi.fn(async (a: AlertEvent) => {
+        posted.push(a.id);
+      }),
+      pageSize: PAGE,
+      loadCursor: vi.fn(async () => 5), // where the previous run stopped
+    });
+
+    expect(await replay.start()).toBe(5);
+    await replay.catchUp();
+
+    expect(posted).toEqual([6, 7, 8]);
+  });
+
+  it('starts at the head on a first run, with nothing persisted', async () => {
+    const { replay, posted } = build(8, { loadCursor: vi.fn(async () => null) } as never);
+
+    expect(await replay.start()).toBe(8);
+    await replay.catchUp();
+
+    expect(posted).toEqual([]);
+  });
+
+  it('persists the cursor as it advances', async () => {
+    const saved: number[] = [];
+    const stored = [alert(1), alert(2)];
+    const replay = new AlertReplay({
+      listAlertsSince: vi.fn(async (since: number) => stored.filter((a) => a.id > since).slice(0, PAGE)),
+      getAlertHead: vi.fn(async () => 0),
+      deliver: vi.fn(async () => {}),
+      pageSize: PAGE,
+      loadCursor: vi.fn(async () => null),
+      saveCursor: vi.fn(async (cursor: number) => {
+        saved.push(cursor);
+      }),
+    });
+    await replay.start();
+
+    await replay.catchUp();
+
+    expect(saved).toContain(2);
+  });
+
+  it('keeps working when persisting the cursor fails', async () => {
+    // Best-effort: losing the cursor costs a replay after a restart, which is
+    // recoverable. Throwing would abort a walk that already delivered.
+    const posted: number[] = [];
+    const stored = [alert(1)];
+    const replay = new AlertReplay({
+      listAlertsSince: vi.fn(async (since: number) => stored.filter((a) => a.id > since).slice(0, PAGE)),
+      getAlertHead: vi.fn(async () => 0),
+      deliver: vi.fn(async (a: AlertEvent) => {
+        posted.push(a.id);
+      }),
+      pageSize: PAGE,
+      loadCursor: vi.fn(async () => null),
+      saveCursor: vi.fn(async () => {
+        throw new Error('engine is down');
+      }),
+    });
+    await replay.start();
+
+    await expect(replay.catchUp()).resolves.toBe(1);
+    expect(posted).toEqual([1]);
+  });
+});
+
+describe('AlertReplay: reconnect during a walk', () => {
+  it('re-runs the walk instead of dropping a reconnect that lands mid-walk', async () => {
+    // Returning 0 and doing nothing meant alerts published during THAT
+    // disconnect were never fetched, and a later live alert moved the cursor
+    // past them for good.
+    let release: () => void = () => {};
+    const stored = [alert(1)];
+    const posted: number[] = [];
+
+    const replay = new AlertReplay({
+      listAlertsSince: vi.fn(async (since: number) => stored.filter((a) => a.id > since).slice(0, PAGE)),
+      getAlertHead: vi.fn(async () => 0),
+      deliver: vi.fn(async (a: AlertEvent) => {
+        if (a.id === 1) await new Promise<void>((resolve) => (release = resolve));
+        posted.push(a.id);
+      }),
+      pageSize: PAGE,
+    });
+    await replay.start();
+
+    const walking = replay.catchUp();
+    // A reconnect lands mid-walk; more alerts appeared during that disconnect.
+    expect(await replay.catchUp()).toBe(0);
+    stored.push(alert(2), alert(3));
+
+    release();
+    await walking;
+
+    expect(posted).toEqual([1, 2, 3]); // the re-run picked up 2 and 3
+  });
+});
+
+describe('AlertReplay: giving up on a hopeless alert', () => {
+  it('stops retrying after the attempt limit and lets the cursor move on', async () => {
+    // Retrying forever pinned the cursor, so every reconnect re-walked the
+    // backlog and re-posted ids already evicted from the de-duplication set.
+    const stored = [alert(1), alert(2), alert(3)];
+    const posted: number[] = [];
+    const deliver = vi.fn(async (a: AlertEvent) => {
+      if (a.id === 2) throw new Error('permanently broken');
+      posted.push(a.id);
+    });
+    const replay = new AlertReplay({
+      listAlertsSince: vi.fn(async (since: number) => stored.filter((a) => a.id > since).slice(0, PAGE)),
+      getAlertHead: vi.fn(async () => 0),
+      deliver,
+      pageSize: PAGE,
+      maxAttempts: 2,
+    });
+    await replay.start();
+
+    await replay.catchUp();
+    expect(replay.resumeFrom).toBe(1); // held below the failure, retrying
+
+    await replay.catchUp(); // second attempt exhausts the budget
+
+    expect(replay.resumeFrom).toBe(3); // given up on; the cursor moved past it
+    expect(posted).toEqual([1, 3, 3].slice(0, posted.length));
+    expect(deliver.mock.calls.filter((c) => (c[0] as AlertEvent).id === 2)).toHaveLength(2);
   });
 });

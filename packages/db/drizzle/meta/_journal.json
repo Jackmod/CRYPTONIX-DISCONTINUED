@@ -15,6 +15,13 @@
       "when": 1788167217664,
       "tag": "0001_dapper_giant_man",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1788215797072,
+      "tag": "0002_organic_red_hulk",
+      "breakpoints": true
     }
   ]
 }

@@ -11,6 +11,19 @@ export interface AlertReplayOptions {
   pageSize: number;
   /** Ids remembered for de-duplication. */
   maxRememberedIds?: number;
+  /** Delivery attempts before an alert is given up on. Defaults to 3. */
+  maxAttempts?: number;
+  /**
+   * Reads the cursor persisted by a previous run, or null on a first run.
+   *
+   * Without this the cursor was in-memory only and `start` reset it to the
+   * engine head, so alerts published while the bot process was DOWN were
+   * never replayed — the case the replay mechanism most obviously exists for.
+   * Only within-process reconnects were actually covered.
+   */
+  loadCursor?(): Promise<number | null>;
+  /** Persists the cursor. Failures are logged, never fatal. */
+  saveCursor?(cursor: number): Promise<void>;
 }
 
 /**
@@ -59,13 +72,26 @@ export class AlertReplay {
    * failed id keeps it reachable on the next walk.
    */
   private inFlightIds = new Set<number>();
-  private failedIds = new Set<number>();
+  /**
+   * Ids whose delivery failed, with how many times.
+   *
+   * Retries are bounded on purpose. Holding the cursor below a permanently
+   * undeliverable alert forever meant every reconnect re-walked the backlog
+   * from that point, and ids already evicted from the bounded de-duplication
+   * set were posted again — duplicates in Discord, growing with history. After
+   * `maxAttempts` the alert is given up on, loudly, and the cursor moves on.
+   */
+  private failureCounts = new Map<number, number>();
+  private rerunRequested = false;
   private queued: AlertEvent[] = [];
   private deliveredIds = new Set<number>();
   private readonly maxRememberedIds: number;
 
+  private readonly maxAttempts: number;
+
   constructor(private options: AlertReplayOptions) {
     this.maxRememberedIds = options.maxRememberedIds ?? 1_000;
+    this.maxAttempts = options.maxAttempts ?? 3;
   }
 
   /** Where the next catch-up resumes from. */
@@ -87,10 +113,16 @@ export class AlertReplay {
   async start(retryDelayMs = 5_000, sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))) {
     for (;;) {
       try {
-        this.cursor = await this.options.getAlertHead();
+        // A persisted cursor wins: it is where the previous run left off, and
+        // everything after it is genuinely undelivered. Only a first run —
+        // nothing persisted — starts at the head, so it does not replay the
+        // whole history into channels that may have changed since.
+        const persisted = (await this.options.loadCursor?.()) ?? null;
+        this.cursor = persisted ?? (await this.options.getAlertHead());
         this.started = true;
-        // The head IS the frontier, so by definition nothing is behind it.
-        this.backlogClear = true;
+        // The head IS the frontier, so by definition nothing is behind it. A
+        // resumed cursor is not: there is a backlog to walk first.
+        this.backlogClear = persisted === null;
         return this.cursor;
       } catch (err) {
         console.error(`could not read the alert head; retrying in ${retryDelayMs}ms`, err);
@@ -121,7 +153,14 @@ export class AlertReplay {
    * Returns how many alerts were posted.
    */
   async catchUp(): Promise<number> {
-    if (!this.started || this.catchingUp) return 0;
+    if (!this.started) return 0;
+    if (this.catchingUp) {
+      // A reconnect landing mid-walk used to be dropped outright: it returned
+      // 0 and nothing re-ran, so alerts published during that disconnect were
+      // never fetched, and a later live alert moved the cursor past them.
+      this.rerunRequested = true;
+      return 0;
+    }
 
     this.catchingUp = true;
     this.backlogClear = false;
@@ -189,6 +228,13 @@ export class AlertReplay {
       }
     }
 
+    // A reconnect arrived while this walk was running; its backlog has not
+    // been fetched yet.
+    if (this.rerunRequested) {
+      this.rerunRequested = false;
+      posted += await this.catchUp();
+    }
+
     return posted;
   }
 
@@ -209,12 +255,21 @@ export class AlertReplay {
     this.inFlightIds.add(alert.id);
     try {
       await this.options.deliver(alert);
-      this.failedIds.delete(alert.id);
+      this.failureCounts.delete(alert.id);
     } catch (err) {
-      // Eligible again on the next walk. Safe because the cursor is held
-      // below this id for as long as it is in `failedIds`.
-      this.deliveredIds.delete(alert.id);
-      this.failedIds.add(alert.id);
+      const attempts = (this.failureCounts.get(alert.id) ?? 0) + 1;
+      if (attempts >= this.maxAttempts) {
+        // Give up: keep it claimed so the cursor can move past it. Retrying
+        // forever pins the cursor and re-posts everything after it on every
+        // reconnect once the de-duplication set has rolled over.
+        this.failureCounts.delete(alert.id);
+        console.error(`alert ${alert.id} failed ${attempts} times; giving up on it`);
+      } else {
+        // Eligible again on the next walk. Safe because the cursor is held
+        // below this id while it is still being retried.
+        this.deliveredIds.delete(alert.id);
+        this.failureCounts.set(alert.id, attempts);
+      }
       throw err;
     } finally {
       this.inFlightIds.delete(alert.id);
@@ -237,13 +292,21 @@ export class AlertReplay {
   private advanceCursorTo(target: number) {
     const blocked = this.lowestUnresolvedId();
     const bound = blocked === null ? target : Math.min(target, blocked - 1);
-    if (bound > this.cursor) this.cursor = bound;
+    if (bound <= this.cursor) return;
+
+    this.cursor = bound;
+    // Persisting is best-effort: losing it costs a replay after a restart,
+    // which is recoverable, whereas throwing here would abort a walk that has
+    // already delivered its alerts.
+    void this.options.saveCursor?.(bound).catch((err) => {
+      console.error(`could not persist alert cursor ${bound}`, err);
+    });
   }
 
   /** Lowest id that must stay fetchable, or null when there is none. */
   private lowestUnresolvedId(): number | null {
     let lowest: number | null = null;
-    for (const id of [...this.inFlightIds, ...this.failedIds]) {
+    for (const id of [...this.inFlightIds, ...this.failureCounts.keys()]) {
       if (lowest === null || id < lowest) lowest = id;
     }
     return lowest;

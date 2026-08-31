@@ -145,16 +145,19 @@ export class WalletMonitor {
     // would remove them. Left behind, the /alerts replay endpoint could still
     // push an untracked wallet's trades into Discord long after it was removed.
     // They go first, while the trade ids are still available to match on.
-    const tradeRows = await this.db
-      .select({ id: walletTrades.id })
-      .from(walletTrades)
-      .where(eq(walletTrades.walletId, walletId));
-    const tradeIds = tradeRows.map((row) => row.id);
-    if (tradeIds.length > 0) {
-      await this.db
-        .delete(alerts)
-        .where(and(inArray(alerts.refId, tradeIds), inArray(alerts.type, ['wallet_buy', 'wallet_sell'])));
-    }
+    // A subquery, not a fetched id list: binding one parameter per trade blows
+    // Postgres's 65535-parameter limit on a busy wallet, and the failure lands
+    // AFTER the Helius webhook has already been released — leaving the wallet
+    // half-untracked with no webhook and no way to finish removing it.
+    await this.db.delete(alerts).where(
+      and(
+        inArray(
+          alerts.refId,
+          this.db.select({ id: walletTrades.id }).from(walletTrades).where(eq(walletTrades.walletId, walletId))
+        ),
+        inArray(alerts.type, ['wallet_buy', 'wallet_sell'])
+      )
+    );
 
     // Children before parent: both tables carry a FK onto wallets.id.
     await this.db.delete(pnlDaily).where(eq(pnlDaily.walletId, walletId));

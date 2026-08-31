@@ -120,6 +120,21 @@ export class EngineClient {
     return typeof body.id === 'number' ? body.id : 0;
   }
 
+  /** Reads a stored value, or null if the key has never been written. */
+  async getState(key: string): Promise<string | null> {
+    const res = await this.request(`/state/${encodeURIComponent(key)}`);
+    const body = (await res.json()) as { value?: string | null };
+    return body.value ?? null;
+  }
+
+  async setState(key: string, value: string): Promise<void> {
+    await this.request(`/state/${encodeURIComponent(key)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ value }),
+    });
+  }
+
   async listGuildConfigs(): Promise<GuildConfig[]> {
     const res = await this.request('/discord/guilds');
     return res.json() as Promise<GuildConfig[]>;

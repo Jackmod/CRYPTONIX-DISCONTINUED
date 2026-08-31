@@ -751,4 +751,42 @@ describe('engine API', () => {
 
     expect(res.status).toBe(400);
   });
+
+  it('stores and reads back client state', async () => {
+    // The bot's alert cursor lives here. Held only in memory it reset to the
+    // head on every start, so alerts published while the bot was DOWN were
+    // never replayed.
+    const app = buildApp();
+
+    expect((await api(app).get('/state/discord-bot:1:alert-cursor')).body.value).toBeNull();
+
+    const put = await api(app).put('/state/discord-bot:1:alert-cursor').send({ value: '42' });
+    expect(put.status).toBe(200);
+
+    expect((await api(app).get('/state/discord-bot:1:alert-cursor')).body.value).toBe('42');
+
+    await api(app).put('/state/discord-bot:1:alert-cursor').send({ value: '77' });
+    expect((await api(app).get('/state/discord-bot:1:alert-cursor')).body.value).toBe('77');
+  });
+
+  it('rejects a hostile or oversized state key or value', async () => {
+    const app = buildApp();
+
+    for (const key of ['../../etc/passwd', 'has space', '', 'k'.repeat(200)]) {
+      const res = await api(app).put(`/state/${encodeURIComponent(key)}`).send({ value: 'x' });
+      expect([400, 404], `key ${key}`).toContain(res.status);
+    }
+
+    for (const value of [123, {}, [], null, 'v'.repeat(5000)]) {
+      const res = await api(app).put('/state/ok-key').send({ value } as never);
+      expect(res.status, `value ${JSON.stringify(value)}`).toBe(400);
+    }
+  });
+
+  it('GET /alerts rejects an empty since value', async () => {
+    // `?since=` slipped through `?? '0'` as '' and Number('') is 0, returning
+    // the OLDEST alerts to a caller that asked to resume.
+    const app = buildApp();
+    expect((await api(app).get('/alerts?since=')).status).toBe(400);
+  });
 });

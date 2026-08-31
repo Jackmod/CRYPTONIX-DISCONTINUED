@@ -79,10 +79,22 @@ const ALERT_PAGE_SIZE = 50;
  * history on restart, stopping after one page, double-posting, skipping ids a
  * live alert jumped over) was invisible here in the wiring.
  */
+/**
+ * Keyed by application id, so two bots sharing one engine keep separate
+ * cursors rather than consuming each other's backlog.
+ */
+const CURSOR_KEY = `discord-bot:${env.discordClientId}:alert-cursor`;
+
 const replay = new AlertReplay({
   listAlertsSince: (since) => engine.listAlertsSince(since),
   getAlertHead: () => engine.getAlertHead(),
   pageSize: ALERT_PAGE_SIZE,
+  loadCursor: async () => {
+    const stored = await engine.getState(CURSOR_KEY);
+    const parsed = stored === null ? Number.NaN : Number(stored);
+    return Number.isInteger(parsed) && parsed >= 0 ? parsed : null;
+  },
+  saveCursor: (cursor) => engine.setState(CURSOR_KEY, String(cursor)),
   deliver: async (alert) => {
     const { attempted, delivered } = await fanOutAlert(alert, guildConfigs, async (channelId, message) => {
       const channel = await client.channels.fetch(channelId);
