@@ -1102,6 +1102,40 @@ describe('WalletMonitor', () => {
 
     const trades = await db.select().from(walletTrades);
     expect(trades).toHaveLength(1);
+
+    // the duplicate must not produce a second alert row or a second bus event
+    expect(await db.select().from(alerts)).toHaveLength(1);
+  });
+
+  it('one failing wallet does not stop the others in the same batch', async () => {
+    const alertBus = new AlertBus();
+    const published: unknown[] = [];
+    alertBus.on('alert', (a) => published.push(a));
+    const monitor = new WalletMonitor(db, fakeHelius(), alertBus);
+    await monitor.trackWallet('BadAddr', 'Broken Wallet', false);
+    await monitor.trackWallet('Addr1', 'Good Wallet', true);
+
+    // make parsing blow up for the first wallet only
+    const realParse = monitor as unknown as {
+      handleTransactionForWallet: (tx: HeliusEnhancedTransaction, w: { address: string }) => Promise<void>;
+    };
+    const original = realParse.handleTransactionForWallet.bind(monitor);
+    realParse.handleTransactionForWallet = async (tx, w) => {
+      if (w.address === 'BadAddr') throw new Error('simulated per-wallet failure');
+      return original(tx, w);
+    };
+
+    await monitor.handleWebhookPayload([
+      swapTx({
+        tokenTransfers: [{ fromUserAccount: 'Pool', toUserAccount: 'Addr1', mint: 'Mint1', tokenAmount: 1000 }],
+        nativeTransfers: [{ fromUserAccount: 'Addr1', toUserAccount: 'Pool', amount: 2_000_000_000 }],
+      }),
+    ]);
+
+    // the good wallet's trade still landed despite the other wallet throwing
+    const trades = await db.select().from(walletTrades);
+    expect(trades).toHaveLength(1);
+    expect(published).toHaveLength(1);
   });
 
   it('a transaction irrelevant to any tracked wallet produces no trade or alert', async () => {
@@ -1149,18 +1183,24 @@ export class WalletMonitor {
   }
 
   async handleWebhookPayload(transactions: HeliusEnhancedTransaction[]) {
-    for (const tx of transactions) {
-      await this.handleTransaction(tx);
+    // Fetch the tracked wallets once per batch, not once per transaction, and
+    // keep the fetch itself inside the error boundary: a transient DB failure
+    // here must not abort the whole batch (spec §9 fault isolation).
+    let trackedWallets: (typeof wallets.$inferSelect)[];
+    try {
+      trackedWallets = await this.db.select().from(wallets);
+    } catch (err) {
+      console.error('wallet monitor: failed loading tracked wallets, dropping this batch', err);
+      return;
     }
-  }
 
-  private async handleTransaction(tx: HeliusEnhancedTransaction) {
-    const trackedWallets = await this.db.select().from(wallets);
-    for (const wallet of trackedWallets) {
-      try {
-        await this.handleTransactionForWallet(tx, wallet);
-      } catch (err) {
-        console.error(`wallet monitor: failed processing tx ${tx.signature} for wallet ${wallet.id}`, err);
+    for (const tx of transactions) {
+      for (const wallet of trackedWallets) {
+        try {
+          await this.handleTransactionForWallet(tx, wallet);
+        } catch (err) {
+          console.error(`wallet monitor: failed processing tx ${tx.signature} for wallet ${wallet.id}`, err);
+        }
       }
     }
   }
@@ -1208,7 +1248,7 @@ export class WalletMonitor {
 ```bash
 TEST_DATABASE_URL=postgres://postgres:postgres@localhost:5432/cryptonix_test pnpm --filter @cryptonix/engine test
 ```
-Expected: PASS, all 4 tests.
+Expected: PASS, all 5 tests.
 
 - [ ] **Step 6: Commit**
 
