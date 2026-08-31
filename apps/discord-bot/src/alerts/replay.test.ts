@@ -983,3 +983,48 @@ describe('AlertReplay: overlapping live deliveries', () => {
     await flushing;
   });
 });
+
+describe('AlertReplay: flushing on shutdown', () => {
+  it('gives up rather than hanging when the engine never answers', async () => {
+    // saveCursor goes through a bare fetch with no timeout. Waiting forever
+    // means a hung engine -- likely during a rolling deploy -- keeps the
+    // process alive until SIGKILL, which is the ungraceful exit the flush
+    // exists to avoid.
+    const replay = new AlertReplay({
+      listAlertsSince: vi.fn(async () => []),
+      getAlertHead: vi.fn(async () => 0),
+      deliver: vi.fn(async () => {}),
+      pageSize: PAGE,
+      saveCursor: vi.fn(() => new Promise<void>(() => {})), // never resolves
+    });
+    await replay.start();
+    await replay.handleLive(alert(1));
+
+    const started = Date.now();
+    await replay.flushPendingCursor(50);
+
+    expect(Date.now() - started).toBeLessThan(1_000);
+  });
+
+  it('returns as soon as the outstanding save lands, not after later ones', async () => {
+    // Re-testing the general condition kept it spinning through an
+    // in-progress walk's one-save-per-page, with the bot still posting alerts
+    // while it was meant to be shutting down.
+    const saved: number[] = [];
+    const replay = new AlertReplay({
+      listAlertsSince: vi.fn(async () => []),
+      getAlertHead: vi.fn(async () => 0),
+      deliver: vi.fn(async () => {}),
+      pageSize: PAGE,
+      saveCursor: vi.fn(async (c: number) => {
+        saved.push(c);
+      }),
+    });
+    await replay.start();
+
+    await replay.handleLive(alert(1));
+    await replay.flushPendingCursor(500);
+
+    expect(saved).toContain(1);
+  });
+});

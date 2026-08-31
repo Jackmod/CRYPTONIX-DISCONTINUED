@@ -50,7 +50,9 @@ client.on(Events.GuildCreate, async (guild) => {
   // below swallowed it, and no onboarding message appeared at all.
   const channel = guild.channels.cache.find(
     (c) =>
-      c.type === ChannelType.GuildText &&
+      // Announcement channels are sendable too; excluding them left a guild
+      // whose only usable channel is one with no onboarding message at all.
+      (c.type === ChannelType.GuildText || c.type === ChannelType.GuildAnnouncement) &&
       me !== null &&
       c.permissionsFor(me)?.has(PermissionFlagsBits.SendMessages) === true &&
       c.permissionsFor(me)?.has(PermissionFlagsBits.ViewChannel) === true

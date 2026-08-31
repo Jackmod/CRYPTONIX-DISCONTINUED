@@ -90,6 +90,7 @@ export class AlertReplay {
   private pendingPersist: number | null = null;
   private persisting = false;
   private highestPersistRequested = 0;
+  private lastPersisted = 0;
   /**
    * Highest id successfully delivered.
    *
@@ -149,16 +150,31 @@ export class AlertReplay {
   }
 
   /**
-   * Waits for any pending cursor save to finish.
+   * Waits, briefly, for the cursor save outstanding right now.
    *
    * Saves are fire-and-forget so a walk is never blocked by one, which means
    * shutting down with one in flight loses it and re-posts those alerts after
    * a restart. Called from the signal handler.
+   *
+   * Bounded, and deliberately so on both counts. `saveCursor` goes through a
+   * bare fetch with no timeout, so waiting indefinitely means a hung engine —
+   * likely precisely during a rolling deploy — keeps the process alive until
+   * SIGKILL, which is the ungraceful exit the flush exists to avoid. And it
+   * waits only for the save outstanding at entry: re-testing the general
+   * condition kept it spinning through an in-progress walk's one-save-per-page,
+   * with the bot still posting alerts while it was meant to be shutting down.
    */
-  async flushPendingCursor(): Promise<void> {
-    while (this.persisting || this.pendingPersist !== null) {
+  async flushPendingCursor(timeoutMs = 2_000): Promise<void> {
+    const deadline = Date.now() + timeoutMs;
+    const waitingFor = this.highestPersistRequested;
+
+    while (Date.now() < deadline) {
+      // Done once the outstanding value has actually been written.
+      if (!this.persisting && this.pendingPersist === null) return;
+      if (this.lastPersisted >= waitingFor) return;
       await new Promise((resolve) => setTimeout(resolve, 5));
     }
+    console.error(`cursor flush timed out after ${timeoutMs}ms; shutting down anyway`);
   }
 
   /** Posts a live alert, or queues it if a catch-up is walking the backlog. */
@@ -403,6 +419,7 @@ export class AlertReplay {
         this.pendingPersist = null;
         try {
           await this.options.saveCursor!(value);
+          this.lastPersisted = Math.max(this.lastPersisted, value);
         } catch (err) {
           // Best-effort: losing a save costs a replay after a restart, whereas
           // throwing here would abort a walk that already delivered its alerts.
