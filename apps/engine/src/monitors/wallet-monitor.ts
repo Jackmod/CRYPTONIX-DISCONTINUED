@@ -16,32 +16,43 @@ export class WalletMonitor {
     return wallet;
   }
 
-  async handleWebhookPayload(transactions: HeliusEnhancedTransaction[]) {
-    // Fetch the tracked wallets once per batch, not once per transaction, and
-    // keep the fetch itself inside the error boundary: a transient DB failure
-    // here must not abort the whole batch (spec §9 fault isolation).
-    let trackedWallets: (typeof wallets.$inferSelect)[];
-    try {
-      trackedWallets = await this.db.select().from(wallets);
-    } catch (err) {
-      console.error('wallet monitor: failed loading tracked wallets, dropping this batch', err);
-      return;
-    }
+  /**
+   * Returns the distinct ids of wallets that received a NEW trade row in this
+   * batch (i.e. excludes duplicates and irrelevant transactions), so the
+   * caller knows which wallets' PnL needs recomputing.
+   */
+  async handleWebhookPayload(transactions: HeliusEnhancedTransaction[]): Promise<number[]> {
+    // Fetch the tracked wallets once per batch, not once per transaction.
+    // A failure here must NOT be swallowed: the route needs to see it and
+    // return a non-2xx so Helius retries the whole batch. If we ate the
+    // error and returned 200 (as this used to), Helius would consider the
+    // batch delivered and never retry, permanently losing those trades —
+    // there is no re-backfill path to recover them.
+    const trackedWallets = await this.db.select().from(wallets);
+
+    const walletIdsWithNewTrades = new Set<number>();
 
     for (const tx of transactions) {
       for (const wallet of trackedWallets) {
         try {
-          await this.handleTransactionForWallet(tx, wallet);
+          const inserted = await this.handleTransactionForWallet(tx, wallet);
+          if (inserted) walletIdsWithNewTrades.add(wallet.id);
         } catch (err) {
+          // Per-wallet isolation: one wallet's failure must not stop the
+          // others in the same batch (spec §9 fault isolation) — this stays
+          // a swallow-and-log, unlike the batch-level fetch above.
           console.error(`wallet monitor: failed processing tx ${tx.signature} for wallet ${wallet.id}`, err);
         }
       }
     }
+
+    return [...walletIdsWithNewTrades];
   }
 
-  private async handleTransactionForWallet(tx: HeliusEnhancedTransaction, wallet: typeof wallets.$inferSelect) {
+  /** Returns true if a new trade row was inserted (false for a duplicate or irrelevant tx). */
+  private async handleTransactionForWallet(tx: HeliusEnhancedTransaction, wallet: typeof wallets.$inferSelect): Promise<boolean> {
     const parsed = parseSwap(tx, wallet.address);
-    if (!parsed) return;
+    if (!parsed) return false;
 
     const [trade] = await this.db
       .insert(walletTrades)
@@ -56,7 +67,7 @@ export class WalletMonitor {
       })
       .onConflictDoNothing()
       .returning();
-    if (!trade) return; // duplicate delivery of a signature we already recorded
+    if (!trade) return false; // duplicate delivery of a signature we already recorded
 
     const payload = {
       walletId: wallet.id,
@@ -73,5 +84,6 @@ export class WalletMonitor {
       .returning();
 
     this.alertBus.publish({ type: alert.type, refId: alert.refId, payload: alert.payload });
+    return true;
   }
 }

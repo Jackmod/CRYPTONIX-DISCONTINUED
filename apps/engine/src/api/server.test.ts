@@ -67,6 +67,69 @@ describe('engine API', () => {
     expect(tradesRes.body[0].side).toBe('buy');
   });
 
+  it('a live buy and sell delivered via webhook update PnL, not just backfill', async () => {
+    // Regression guard: recomputePnl used to only run at the end of
+    // backfillWallet. Live trades recorded by handleWebhookPayload never
+    // triggered a recompute, so GET /wallets/:id/pnl stayed frozen at
+    // whatever it was when the wallet was added and drifted from reality
+    // with every subsequent trade.
+    const app = buildApp();
+    const createRes = await request(app).post('/wallets').send({ address: 'Addr1', label: 'Test' });
+    const walletId = createRes.body.id;
+
+    await request(app)
+      .post('/webhooks/helius')
+      .send([
+        {
+          signature: 'buy1',
+          timestamp: 1_735_000_000,
+          type: 'SWAP',
+          tokenTransfers: [{ fromUserAccount: 'Pool', toUserAccount: 'Addr1', mint: 'Mint1', tokenAmount: 1000 }],
+          nativeTransfers: [{ fromUserAccount: 'Addr1', toUserAccount: 'Pool', amount: 2_000_000_000 }],
+        },
+      ]);
+
+    await request(app)
+      .post('/webhooks/helius')
+      .send([
+        {
+          signature: 'sell1',
+          timestamp: 1_735_003_600,
+          type: 'SWAP',
+          tokenTransfers: [{ fromUserAccount: 'Addr1', toUserAccount: 'Pool', mint: 'Mint1', tokenAmount: 1000 }],
+          nativeTransfers: [{ fromUserAccount: 'Pool', toUserAccount: 'Addr1', amount: 3_000_000_000 }],
+        },
+      ]);
+
+    const pnlRes = await request(app).get(`/wallets/${walletId}/pnl`);
+    expect(pnlRes.status).toBe(200);
+    expect(pnlRes.body).toHaveLength(1);
+    expect(pnlRes.body[0].realizedPnlSol).toBeCloseTo(1); // bought for 2, sold for 3
+  });
+
+  it('a DB failure while loading tracked wallets returns a non-2xx so Helius retries, instead of 200', async () => {
+    // Regression guard: handleWebhookPayload used to swallow this failure
+    // and log-and-return, so the route always responded 200 regardless.
+    // Helius then considered the batch delivered and never retried it,
+    // permanently losing those trades with no re-backfill path.
+    const alertBus = new AlertBus();
+    const helius = { createWalletWebhook: vi.fn(), getTransactionHistory: vi.fn() } as any;
+    const failingDb = {
+      select: () => ({ from: () => Promise.reject(new Error('simulated db outage')) }),
+    } as any;
+    const walletMonitor = new WalletMonitor(failingDb, helius, alertBus);
+    const pnlTracker = new PnlTracker(db, helius);
+    const solanaRpc = { getBalanceSol: vi.fn() };
+    const app = createServer(db, walletMonitor, pnlTracker, alertBus, solanaRpc);
+
+    const res = await request(app)
+      .post('/webhooks/helius')
+      .send([{ signature: 'sig1', timestamp: 1_735_000_000, type: 'SWAP', tokenTransfers: [], nativeTransfers: [] }]);
+
+    expect(res.status).not.toBe(200);
+    expect(res.status).toBe(500);
+  });
+
   it('GET /wallets/:id/pnl returns the daily PnL rows', async () => {
     const app = buildApp();
     const createRes = await request(app).post('/wallets').send({ address: 'Addr1', label: 'Test' });
