@@ -143,19 +143,25 @@ export class AlertReplay {
       }
       this.backlogClear = true;
     } finally {
-      this.catchingUp = false;
-
       // In `finally`: a throw from the walk (a failing listAlertsSince, say)
       // must not strand the live alerts queued behind it, which would
       // otherwise wait for some future clean catch-up and pile up meanwhile.
-      const pending = this.queued;
-      this.queued = [];
-      for (const alert of pending) {
-        try {
-          if (await this.deliverOnce(alert)) posted++;
-        } catch (err) {
-          console.error(`could not deliver queued alert ${alert.id}; skipping it`, err);
+      //
+      // `catchingUp` stays true across the drain and is cleared only after it.
+      // Releasing it first let a reconnect start a second walk that shared the
+      // cursor and re-posted ids already evicted from the de-duplication set.
+      try {
+        const pending = this.queued;
+        this.queued = [];
+        for (const alert of pending) {
+          try {
+            if (await this.deliverOnce(alert)) posted++;
+          } catch (err) {
+            console.error(`could not deliver queued alert ${alert.id}; skipping it`, err);
+          }
         }
+      } finally {
+        this.catchingUp = false;
       }
     }
 
@@ -172,11 +178,18 @@ export class AlertReplay {
   private async deliverOnce(alert: AlertEvent, { advanceCursor = true } = {}): Promise<boolean> {
     if (this.deliveredIds.has(alert.id)) return false;
 
-    await this.options.deliver(alert);
-
-    // Only after a successful delivery: a throw should leave the alert
-    // eligible for the next attempt rather than silently consumed.
+    // Claimed BEFORE awaiting. Marking it only on success left a window where
+    // a reconnect-triggered catchUp refetched an alert whose live delivery was
+    // still in flight and posted it a second time.
     this.remember(alert.id);
+    try {
+      await this.options.deliver(alert);
+    } catch (err) {
+      // Un-claim so the alert stays eligible for the next attempt rather than
+      // being silently consumed by a failure.
+      this.deliveredIds.delete(alert.id);
+      throw err;
+    }
     // Only when nothing may still lie behind the cursor. After an aborted
     // walk there are unfetched ids below this one, and moving past them would
     // lose them.

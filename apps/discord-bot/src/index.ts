@@ -83,14 +83,24 @@ const replay = new AlertReplay({
   listAlertsSince: (since) => engine.listAlertsSince(since),
   getAlertHead: () => engine.getAlertHead(),
   pageSize: ALERT_PAGE_SIZE,
-  deliver: (alert) =>
-    fanOutAlert(alert, guildConfigs, async (channelId, message) => {
+  deliver: async (alert) => {
+    const { attempted, delivered } = await fanOutAlert(alert, guildConfigs, async (channelId, message) => {
       const channel = await client.channels.fetch(channelId);
       if (!channel?.isTextBased() || !('send' in channel)) {
         throw new Error(`channel ${channelId} is not a text channel the bot can post to`);
       }
       await channel.send(message as Parameters<typeof channel.send>[0]);
-    }),
+    });
+
+    // fanOutAlert guards each guild's send so one broken channel cannot cost
+    // the others their alerts — which means it resolves even when the message
+    // reached nobody. Reporting that as success let the replay cursor advance
+    // past an alert nothing ever saw. Throwing keeps it eligible for retry;
+    // the walk's per-alert boundary stops it blocking anything behind it.
+    if (attempted > 0 && delivered === 0) {
+      throw new Error(`alert ${alert.id} reached none of the ${attempted} configured channel(s)`);
+    }
+  },
 });
 
 /**

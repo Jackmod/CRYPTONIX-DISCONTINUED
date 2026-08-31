@@ -67,3 +67,42 @@ describe('fanOutAlert', () => {
     expect(send).not.toHaveBeenCalled();
   });
 });
+
+describe('fanOutAlert: reporting', () => {
+  it('reports how many guilds it reached', async () => {
+    const send = vi.fn().mockResolvedValue(undefined);
+
+    const result = await fanOutAlert(walletAlert, cacheOf(['g1', 'c1'], ['g2', 'c2']), send);
+
+    expect(result).toEqual({ attempted: 2, delivered: 2 });
+  });
+
+  it('reports zero delivered when every send fails', async () => {
+    // Swallowing every error and resolving anyway let the caller mark an alert
+    // delivered that reached nobody, and the replay cursor advanced past it.
+    const send = vi.fn().mockRejectedValue(new Error('missing permissions'));
+
+    const result = await fanOutAlert(walletAlert, cacheOf(['g1', 'c1'], ['g2', 'c2']), send);
+
+    expect(result).toEqual({ attempted: 2, delivered: 0 });
+  });
+
+  it('reports a partial delivery honestly', async () => {
+    const send = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('missing permissions'))
+      .mockResolvedValueOnce(undefined);
+
+    const result = await fanOutAlert(walletAlert, cacheOf(['g1', 'c1'], ['g2', 'c2']), send);
+
+    expect(result).toEqual({ attempted: 2, delivered: 1 });
+  });
+
+  it('reports nothing attempted when no guild is configured', async () => {
+    // Distinct from a failure: there was nowhere to send it, so the caller
+    // should not treat it as undelivered and retry forever.
+    const result = await fanOutAlert(walletAlert, cacheOf(), vi.fn());
+
+    expect(result).toEqual({ attempted: 0, delivered: 0 });
+  });
+});

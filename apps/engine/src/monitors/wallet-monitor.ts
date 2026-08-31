@@ -159,7 +159,16 @@ export class WalletMonitor {
     // Children before parent: both tables carry a FK onto wallets.id.
     await this.db.delete(pnlDaily).where(eq(pnlDaily.walletId, walletId));
     await this.db.delete(walletTrades).where(eq(walletTrades.walletId, walletId));
-    await this.db.delete(wallets).where(eq(wallets.id, walletId));
+
+    // RETURNING, so we see the row's FINAL state. A /track interleaved with
+    // this untrack takes the self-heal path (the id was nulled above), creates
+    // a fresh webhook and writes it here — after we already released the old
+    // one. Without this the new webhook is orphaned against the address cap.
+    const [deleted] = await this.db.delete(wallets).where(eq(wallets.id, walletId)).returning();
+    if (deleted?.heliusWebhookId) {
+      console.warn(`wallet ${walletId} gained webhook ${deleted.heliusWebhookId} while being untracked; releasing it`);
+      await this.releaseWebhook(deleted.heliusWebhookId);
+    }
     return true;
   }
 

@@ -278,3 +278,83 @@ describe('AlertReplay: live and catch-up together', () => {
     expect(posted).toEqual([1, 2, 3, 4]);
   });
 });
+
+describe('AlertReplay: concurrency', () => {
+  it('does not post an alert twice when a catch-up races an in-flight live delivery', async () => {
+    // Claiming the id only after delivery resolved left a window where a
+    // reconnect-triggered walk refetched an alert still being posted.
+    let releaseDelivery: () => void = () => {};
+    const posted: number[] = [];
+    const stored = [alert(1)];
+
+    const replay = new AlertReplay({
+      listAlertsSince: vi.fn(async (since: number) => stored.filter((a) => a.id > since).slice(0, PAGE)),
+      getAlertHead: vi.fn(async () => 0),
+      deliver: vi.fn(async (a: AlertEvent) => {
+        await new Promise<void>((resolve) => (releaseDelivery = resolve));
+        posted.push(a.id);
+      }),
+      pageSize: PAGE,
+    });
+    await replay.start();
+
+    const live = replay.handleLive(alert(1)); // in flight, not yet resolved
+    const walking = replay.catchUp(); // reconnect while it is still going
+
+    releaseDelivery();
+    await Promise.all([live, walking]);
+
+    expect(posted).toEqual([1]);
+  });
+
+  it('does not start a second walk while the queued drain is still running', async () => {
+    // Clearing the re-entrancy guard before the drain let a reconnect begin a
+    // concurrent walk sharing the cursor.
+    let releaseDrain: () => void = () => {};
+    let deliveries = 0;
+    const listAlertsSince = vi.fn(async () => []);
+
+    const replay = new AlertReplay({
+      listAlertsSince,
+      getAlertHead: vi.fn(async () => 0),
+      deliver: vi.fn(async () => {
+        deliveries++;
+        if (deliveries === 1) await new Promise<void>((resolve) => (releaseDrain = resolve));
+      }),
+      pageSize: PAGE,
+    });
+    await replay.start();
+
+    const first = replay.catchUp();
+    await replay.handleLive(alert(1)); // queued, drained by `first`
+    const callsBefore = listAlertsSince.mock.calls.length;
+
+    const second = replay.catchUp(); // arrives while the drain is awaiting
+    expect(await second).toBe(0); // refused: a walk is still in progress
+
+    releaseDrain();
+    await first;
+    expect(listAlertsSince.mock.calls.length).toBeGreaterThanOrEqual(callsBefore);
+  });
+
+  it('re-delivers an alert whose delivery failed', async () => {
+    // Claiming the id up front must not consume it on failure.
+    const posted: number[] = [];
+    let attempts = 0;
+    const replay = new AlertReplay({
+      listAlertsSince: vi.fn(async () => []),
+      getAlertHead: vi.fn(async () => 0),
+      deliver: vi.fn(async (a: AlertEvent) => {
+        if (++attempts === 1) throw new Error('discord is down');
+        posted.push(a.id);
+      }),
+      pageSize: PAGE,
+    });
+    await replay.start();
+
+    await expect(replay.handleLive(alert(5))).rejects.toThrow('discord is down');
+    await replay.handleLive(alert(5)); // eligible again
+
+    expect(posted).toEqual([5]);
+  });
+});
