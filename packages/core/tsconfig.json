@@ -1,9 +1,5 @@
 {
   "extends": "@cryptonix/config/tsconfig.base.json",
-  "compilerOptions": {
-    "rootDir": "src",
-    "outDir": "dist"
-  },
   "include": ["src"],
-  "exclude": ["**/*.test.ts"]
+  "exclude": ["src/**/*.test.ts"]
 }
