@@ -1,4 +1,4 @@
-import type { HeliusEnhancedTransaction, ParsedSwap } from './types';
+import type { HeliusEnhancedTransaction, ParsedSwap } from './types.js';
 
 const LAMPORTS_PER_SOL = 1_000_000_000;
 
@@ -39,4 +39,4 @@ export function parseSwap(tx: HeliusEnhancedTransaction, walletAddress: string):
   return null;
 }
 
-export type { HeliusEnhancedTransaction, HeliusTokenTransfer, HeliusNativeTransfer, ParsedSwap } from './types';
+export type { HeliusEnhancedTransaction, HeliusTokenTransfer, HeliusNativeTransfer, ParsedSwap } from './types.js';
