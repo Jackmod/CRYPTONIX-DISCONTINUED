@@ -155,8 +155,13 @@ export class HeliusClient {
     const res = await this.fetchWithRetry(`${HELIUS_BASE}/webhooks/${webhookId}?api-key=${this.config.apiKey}`, {
       method: 'DELETE',
     });
-    if (res.status === 404) return;
-    if (!res.ok) throw new HeliusError(`Helius webhook delete failed: ${this.redact(await res.text())}`, res.status);
+    if (res.status === 404 || res.ok) {
+      // Release the connection: an unread body keeps its undici socket checked
+      // out until GC, the same leak fetchWithRetry guards against above.
+      await res.body?.cancel().catch(() => {});
+      return;
+    }
+    throw new HeliusError(`Helius webhook delete failed: ${this.redact(await res.text())}`, res.status);
   }
 
   async getTransactionHistory(address: string, before?: string): Promise<HeliusEnhancedTransaction[]> {

@@ -1,4 +1,4 @@
-import { Client, Events, GatewayIntentBits, MessageFlags, PermissionFlagsBits } from 'discord.js';
+import { ChannelType, Client, Events, GatewayIntentBits, MessageFlags, PermissionFlagsBits } from 'discord.js';
 import { env } from './env.js';
 import { EngineClient } from './engine/client.js';
 import { AlertStream } from './engine/alert-stream.js';
@@ -44,8 +44,16 @@ client.on(Events.InteractionCreate, async (interaction) => {
 // them at /setup rather than leaving a silent bot that never posts.
 client.on(Events.GuildCreate, async (guild) => {
   const me = guild.members.me;
+  // GuildText specifically: isTextBased() also matches threads and voice
+  // channels, and a thread passes a SendMessages check but needs
+  // SendMessagesInThreads to actually post — so the send failed, the catch
+  // below swallowed it, and no onboarding message appeared at all.
   const channel = guild.channels.cache.find(
-    (c) => c.isTextBased() && me !== null && c.permissionsFor(me)?.has(PermissionFlagsBits.SendMessages) === true
+    (c) =>
+      c.type === ChannelType.GuildText &&
+      me !== null &&
+      c.permissionsFor(me)?.has(PermissionFlagsBits.SendMessages) === true &&
+      c.permissionsFor(me)?.has(PermissionFlagsBits.ViewChannel) === true
   );
   if (!channel?.isTextBased() || !('send' in channel)) return;
 
@@ -183,11 +191,15 @@ for (const signal of ['SIGINT', 'SIGTERM'] as const) {
     shuttingDown = true;
 
     stream.stop();
-    // destroy() is async: exiting without awaiting it abandoned in-flight
-    // editReply calls and skipped the clean gateway close, so Discord saw the
-    // bot time out instead of disconnect.
-    void client
-      .destroy()
+    // Flush the cursor first: saveCursor is fire-and-forget, so exiting with
+    // one in flight loses it and those alerts are re-posted after a restart.
+    void replay
+      .flushPendingCursor()
+      .catch((err) => console.error('could not flush the alert cursor', err))
+      // destroy() is async: exiting without awaiting it abandoned in-flight
+      // editReply calls and skipped the clean gateway close, so Discord saw
+      // the bot time out instead of disconnect.
+      .then(() => client.destroy())
       .catch((err) => console.error('error closing the Discord client', err))
       .finally(() => process.exit(0));
   });

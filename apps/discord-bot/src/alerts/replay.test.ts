@@ -916,3 +916,70 @@ describe('AlertReplay: cursor persistence', () => {
     expect(saved[saved.length - 1]).toBe(20);
   });
 });
+
+describe('AlertReplay: overlapping live deliveries', () => {
+  it('catches the cursor up when a higher id resolves before a lower one', async () => {
+    // The higher id resolving first was blocked by the lower one still in
+    // flight, and nothing revisited it -- so the cursor stalled below an alert
+    // already posted, and a restart re-posted it.
+    const releases = new Map<number, () => void>();
+    const posted: number[] = [];
+    const replay = new AlertReplay({
+      listAlertsSince: vi.fn(async () => []),
+      getAlertHead: vi.fn(async () => 100),
+      deliver: vi.fn(async (a: AlertEvent) => {
+        await new Promise<void>((resolve) => releases.set(a.id, resolve));
+        posted.push(a.id);
+      }),
+      pageSize: PAGE,
+    });
+    await replay.start();
+
+    const first = replay.handleLive(alert(101));
+    const second = replay.handleLive(alert(102));
+    await new Promise((r) => setTimeout(r, 5));
+
+    releases.get(102)!(); // the LATER alert resolves first
+    await second;
+    expect(replay.resumeFrom).toBe(100); // blocked by 101, still in flight
+
+    releases.get(101)!();
+    await first;
+
+    // Both delivered, so the cursor must reflect the highest of them.
+    expect([...posted].sort((a, b) => a - b)).toEqual([101, 102]);
+    expect(replay.resumeFrom).toBe(102);
+  });
+
+  it('flushPendingCursor waits for an in-flight save', async () => {
+    let releaseSave: () => void = () => {};
+    let saveGate: () => void = () => {};
+    const saveStarted = new Promise<void>((resolve) => (saveGate = resolve));
+    let finished = false;
+
+    const replay = new AlertReplay({
+      listAlertsSince: vi.fn(async () => []),
+      getAlertHead: vi.fn(async () => 0),
+      deliver: vi.fn(async () => {}),
+      pageSize: PAGE,
+      saveCursor: vi.fn(async () => {
+        saveGate();
+        await new Promise<void>((resolve) => (releaseSave = resolve));
+        finished = true;
+      }),
+    });
+    await replay.start();
+
+    await replay.handleLive(alert(5));
+    await saveStarted;
+
+    const flushing = replay.flushPendingCursor().then(() => {
+      // Must not resolve before the save actually completed, or a shutdown
+      // exits with the cursor unsaved and re-posts those alerts.
+      expect(finished).toBe(true);
+    });
+
+    releaseSave();
+    await flushing;
+  });
+});

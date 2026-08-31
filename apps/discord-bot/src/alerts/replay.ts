@@ -90,6 +90,16 @@ export class AlertReplay {
   private pendingPersist: number | null = null;
   private persisting = false;
   private highestPersistRequested = 0;
+  /**
+   * Highest id successfully delivered.
+   *
+   * The cursor is re-derived from this rather than from whichever alert just
+   * resolved. With two live deliveries overlapping, the higher id can resolve
+   * FIRST and be blocked by the lower one still in flight — and nothing ever
+   * revisited it, so the cursor stalled below an alert already posted and a
+   * restart re-posted it.
+   */
+  private highestDelivered = 0;
   private queued: AlertEvent[] = [];
   private deliveredIds = new Set<number>();
   private readonly maxRememberedIds: number;
@@ -135,6 +145,19 @@ export class AlertReplay {
         console.error(`could not read the alert head; retrying in ${retryDelayMs}ms`, err);
         await sleep(retryDelayMs);
       }
+    }
+  }
+
+  /**
+   * Waits for any pending cursor save to finish.
+   *
+   * Saves are fire-and-forget so a walk is never blocked by one, which means
+   * shutting down with one in flight loses it and re-posts those alerts after
+   * a restart. Called from the signal handler.
+   */
+  async flushPendingCursor(): Promise<void> {
+    while (this.persisting || this.pendingPersist !== null) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
     }
   }
 
@@ -319,10 +342,13 @@ export class AlertReplay {
     } finally {
       this.inFlightIds.delete(alert.id);
     }
+    this.highestDelivered = Math.max(this.highestDelivered, alert.id);
+
     // Only when nothing may still lie behind the cursor. After an aborted
     // walk there are unfetched ids below this one, and moving past them would
-    // lose them.
-    if (advanceCursor && this.backlogClear) this.advanceCursorTo(alert.id);
+    // lose them. Targeting the highest DELIVERED id, not this one, is what
+    // lets the cursor catch up once an earlier in-flight delivery resolves.
+    if (advanceCursor && this.backlogClear) this.advanceCursorTo(this.highestDelivered);
     return true;
   }
 
