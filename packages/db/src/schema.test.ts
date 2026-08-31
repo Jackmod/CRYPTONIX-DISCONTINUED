@@ -1,7 +1,11 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { createDb, wallets, discordGuilds } from './index';
 
-const TEST_DB_URL = process.env.TEST_DATABASE_URL ?? 'postgres://postgres:postgres@localhost:5432/cryptonix_test';
+// Each package owns a separate test database. Turbo runs package test tasks
+// in parallel, and these suites TRUNCATE overlapping tables — sharing one
+// database lets one package's TRUNCATE delete another's rows mid-test.
+const TEST_DB_URL =
+  process.env.TEST_DATABASE_URL_DB ?? 'postgres://postgres:postgres@localhost:5432/cryptonix_test_db';
 const db = createDb(TEST_DB_URL);
 
 describe('wallets table', () => {

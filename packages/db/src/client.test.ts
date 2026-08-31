@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { createDb } from './index';
 
-const TEST_DB_URL = process.env.TEST_DATABASE_URL ?? 'postgres://postgres:postgres@localhost:5432/cryptonix_test';
+const TEST_DB_URL = process.env.TEST_DATABASE_URL_DB ?? 'postgres://postgres:postgres@localhost:5432/cryptonix_test_db';
 
 describe('createDb', () => {
   it('attaches a pool error listener so an idle-connection drop does not crash the process', async () => {

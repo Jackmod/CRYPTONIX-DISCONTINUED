@@ -15,6 +15,12 @@ export interface AlertSocket {
 
 export interface AlertStreamOptions {
   url: string;
+  /**
+   * Sent as `Authorization: Bearer <key>` on the upgrade request. The engine
+   * rejects the handshake without it: the socket carries the live trade feed
+   * of every tracked wallet, and the engine is publicly reachable.
+   */
+  apiKey?: string;
   createSocket?: (url: string) => AlertSocket;
   schedule?: (fn: () => void, ms: number) => void;
   initialDelayMs?: number;
@@ -42,7 +48,12 @@ export class AlertStream {
   private stopped = false;
 
   constructor(private options: AlertStreamOptions) {
-    this.createSocket = options.createSocket ?? ((url) => new WebSocket(url) as unknown as AlertSocket);
+    this.createSocket =
+      options.createSocket ??
+      ((url) =>
+        new WebSocket(url, {
+          headers: options.apiKey ? { Authorization: `Bearer ${options.apiKey}` } : undefined,
+        }) as unknown as AlertSocket);
     this.schedule = options.schedule ?? ((fn, ms) => { setTimeout(fn, ms); });
     this.initialDelayMs = options.initialDelayMs ?? 1_000;
     this.maxDelayMs = options.maxDelayMs ?? 30_000;

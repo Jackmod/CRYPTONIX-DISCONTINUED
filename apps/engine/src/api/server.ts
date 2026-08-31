@@ -9,6 +9,7 @@ import type { PnlTracker } from '../monitors/pnl-tracker.js';
 import type { AlertBus } from './alert-bus.js';
 import type { SolanaRpcClient } from '../solana/balance.js';
 import { isValidSolanaAddress } from '../solana/address.js';
+import { isValidBearer } from './auth.js';
 
 const MAX_LABEL_LENGTH = 100;
 
@@ -88,18 +89,8 @@ function requireApiKey(apiKey: string) {
   return (req: Request, res: Response, next: NextFunction) => {
     if (req.path.startsWith('/webhooks/')) return next();
 
-    const header = req.header('authorization') ?? '';
-    const prefix = 'Bearer ';
-    if (!header.startsWith(prefix)) {
-      res.status(401).json({ error: 'missing or malformed Authorization header' });
-      return;
-    }
-
-    const received = Buffer.from(header.slice(prefix.length));
-    const expected = Buffer.from(apiKey);
-    // Length check first: timingSafeEqual throws on differing lengths.
-    if (received.length !== expected.length || !timingSafeEqual(received, expected)) {
-      res.status(401).json({ error: 'invalid API key' });
+    if (!isValidBearer(req.header('authorization'), apiKey)) {
+      res.status(401).json({ error: 'missing or invalid API key' });
       return;
     }
     next();

@@ -54,7 +54,7 @@ client.on(Events.GuildDelete, (guild) => {
   guildConfigs.remove(guild.id);
 });
 
-const stream = new AlertStream({ url: env.engineWsUrl });
+const stream = new AlertStream({ url: env.engineWsUrl, apiKey: env.engineApiKey });
 
 client.once(Events.ClientReady, async (ready) => {
   console.log(`discord bot ready as ${ready.user.tag}`);

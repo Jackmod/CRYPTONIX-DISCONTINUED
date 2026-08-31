@@ -134,6 +134,36 @@ importers:
         specifier: ^2.1.0
         version: 2.1.9(@types/node@26.4.0)
 
+  tests/e2e:
+    devDependencies:
+      '@cryptonix/config':
+        specifier: workspace:*
+        version: link:../../packages/config
+      '@cryptonix/core':
+        specifier: workspace:*
+        version: link:../../packages/core
+      '@cryptonix/db':
+        specifier: workspace:*
+        version: link:../../packages/db
+      '@cryptonix/discord-bot':
+        specifier: workspace:*
+        version: link:../../apps/discord-bot
+      '@cryptonix/engine':
+        specifier: workspace:*
+        version: link:../../apps/engine
+      '@types/ws':
+        specifier: ^8.5.0
+        version: 8.18.1
+      typescript:
+        specifier: ^5.6.0
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.0
+        version: 2.1.9(@types/node@26.4.0)
+      ws:
+        specifier: ^8.18.0
+        version: 8.21.3(bufferutil@4.1.0)(utf-8-validate@6.0.6)
+
 packages:
 
   '@babel/runtime@7.29.7':
