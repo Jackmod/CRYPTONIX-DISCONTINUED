@@ -95,8 +95,9 @@ const replay = new AlertReplay({
     // fanOutAlert guards each guild's send so one broken channel cannot cost
     // the others their alerts — which means it resolves even when the message
     // reached nobody. Reporting that as success let the replay cursor advance
-    // past an alert nothing ever saw. Throwing keeps it eligible for retry;
-    // the walk's per-alert boundary stops it blocking anything behind it.
+    // past an alert nothing ever saw. Throwing marks it failed, and AlertReplay
+    // holds the cursor below it so the next walk fetches it again; alerts after
+    // it still go out in the meantime.
     if (attempted > 0 && delivered === 0) {
       throw new Error(`alert ${alert.id} reached none of the ${attempted} configured channel(s)`);
     }

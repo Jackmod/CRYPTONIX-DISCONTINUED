@@ -212,8 +212,11 @@ describe('AlertReplay: live and catch-up together', () => {
 
     await expect(replay.catchUp()).resolves.toBe(2);
 
+    // Everything behind the bad alert still went out...
     expect(posted).toEqual([1, 3]);
-    expect(replay.resumeFrom).toBe(3); // the walk moved past the bad alert
+    // ...but the cursor stays below it, so it can be fetched again. Advancing
+    // past it would have put it out of reach of listAlertsSince for good.
+    expect(replay.resumeFrom).toBe(1);
   });
 
   it('still drains queued live alerts when the walk itself throws', async () => {
@@ -334,7 +337,9 @@ describe('AlertReplay: concurrency', () => {
 
     releaseDrain();
     await first;
-    expect(listAlertsSince.mock.calls.length).toBeGreaterThanOrEqual(callsBefore);
+    // Equality, not >=: a >= on a call count can never fail, so it would not
+    // have caught the re-entrancy guard being removed.
+    expect(listAlertsSince.mock.calls.length).toBe(callsBefore);
   });
 
   it('re-delivers an alert whose delivery failed', async () => {
@@ -356,5 +361,98 @@ describe('AlertReplay: concurrency', () => {
     await replay.handleLive(alert(5)); // eligible again
 
     expect(posted).toEqual([5]);
+  });
+
+  it('keeps a failed alert fetchable by holding the cursor below it', async () => {
+    // listAlertsSince only ever returns ids ABOVE the cursor. Letting the
+    // cursor pass an alert whose delivery failed made it unreachable forever.
+    const stored = [alert(1), alert(2), alert(3)];
+    const posted: number[] = [];
+    let failTwo = true;
+    const replay = new AlertReplay({
+      listAlertsSince: vi.fn(async (since: number) => stored.filter((a) => a.id > since).slice(0, PAGE)),
+      getAlertHead: vi.fn(async () => 0),
+      deliver: vi.fn(async (a: AlertEvent) => {
+        if (a.id === 2 && failTwo) throw new Error('discord is down');
+        posted.push(a.id);
+      }),
+      pageSize: PAGE,
+    });
+    await replay.start();
+
+    await replay.catchUp();
+    expect(posted).toEqual([1, 3]); // 3 still went out
+    expect(replay.resumeFrom).toBe(1); // held below the failed id, not at 3
+
+    failTwo = false;
+    await replay.catchUp();
+
+    expect(posted).toEqual([1, 3, 2]); // refetched and delivered
+    expect(replay.resumeFrom).toBe(3);
+  });
+
+  it('does not lose an alert whose in-flight delivery fails during a walk', async () => {
+    // The regression this guards: the walk skipped the claimed id, advanced
+    // the cursor past it, and the delivery then failed - leaving it above
+    // nothing and below the cursor, so unreachable for good.
+    let releaseDelivery: (fail: boolean) => void = () => {};
+    const stored = [alert(7)];
+    const posted: number[] = [];
+    let attempts = 0;
+
+    const replay = new AlertReplay({
+      listAlertsSince: vi.fn(async (since: number) => stored.filter((a) => a.id > since).slice(0, PAGE)),
+      getAlertHead: vi.fn(async () => 0),
+      deliver: vi.fn(async (a: AlertEvent) => {
+        if (++attempts === 1) {
+          await new Promise<void>((resolve, reject) => {
+            releaseDelivery = (fail) => (fail ? reject(new Error('discord is down')) : resolve());
+          });
+        }
+        posted.push(a.id);
+      }),
+      pageSize: PAGE,
+    });
+    await replay.start();
+
+    const live = replay.handleLive(alert(7)); // in flight
+    const walking = replay.catchUp(); // sees 7 claimed, must not pass it
+
+    releaseDelivery(true); // the in-flight delivery fails
+    await expect(live).rejects.toThrow('discord is down');
+    await walking;
+
+    expect(replay.resumeFrom).toBeLessThan(7);
+    await replay.catchUp(); // still reachable
+    expect(posted).toEqual([7]);
+  });
+
+  it('drains alerts that arrive during the drain itself', async () => {
+    // A one-shot snapshot left them queued until the next reconnect, which is
+    // the only thing that calls catchUp.
+    let releaseFirst: () => void = () => {};
+    const posted: number[] = [];
+    let deliveries = 0;
+    const replay = new AlertReplay({
+      listAlertsSince: vi.fn(async () => []),
+      getAlertHead: vi.fn(async () => 0),
+      deliver: vi.fn(async (a: AlertEvent) => {
+        deliveries++;
+        if (deliveries === 1) await new Promise<void>((resolve) => (releaseFirst = resolve));
+        posted.push(a.id);
+      }),
+      pageSize: PAGE,
+    });
+    await replay.start();
+
+    const walking = replay.catchUp();
+    await replay.handleLive(alert(1)); // queued, drained by `walking`
+    // Let the drain begin, then have another arrive mid-drain.
+    await Promise.resolve();
+    await replay.handleLive(alert(2));
+    releaseFirst();
+    await walking;
+
+    expect(posted).toEqual([1, 2]);
   });
 });

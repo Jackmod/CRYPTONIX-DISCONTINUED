@@ -47,6 +47,19 @@ export class AlertReplay {
    * a walk is running.
    */
   private backlogClear = false;
+  /**
+   * Ids claimed but not yet resolved, and ids whose delivery failed.
+   *
+   * The cursor may never advance past either. Claiming an id before awaiting
+   * stops a concurrent walk double-posting it, but on its own it turned that
+   * double-post into permanent loss: the walk skipped the claimed id, moved
+   * the cursor beyond it, and the delivery then failed — and
+   * `listAlertsSince` only ever returns ids ABOVE the cursor, so nothing
+   * could fetch it again. Holding the cursor below the lowest unresolved or
+   * failed id keeps it reachable on the next walk.
+   */
+  private inFlightIds = new Set<number>();
+  private failedIds = new Set<number>();
   private queued: AlertEvent[] = [];
   private deliveredIds = new Set<number>();
   private readonly maxRememberedIds: number;
@@ -134,9 +147,14 @@ export class AlertReplay {
         }
 
         const highest = page.reduce((max, alert) => Math.max(max, alert.id), this.cursor);
+        // Never step over an id that is still in flight or that failed: those
+        // have to remain fetchable, and only ids above the cursor ever are.
+        const blocked = this.lowestUnresolvedId();
+        const next = blocked === null ? highest : Math.min(highest, blocked - 1);
+
         // No forward progress would spin forever; stop instead.
-        if (highest <= this.cursor) break;
-        this.cursor = highest;
+        if (next <= this.cursor) break;
+        this.cursor = next;
 
         // A short page means the backlog is exhausted.
         if (page.length < this.options.pageSize) break;
@@ -151,13 +169,15 @@ export class AlertReplay {
       // Releasing it first let a reconnect start a second walk that shared the
       // cursor and re-posted ids already evicted from the de-duplication set.
       try {
-        const pending = this.queued;
-        this.queued = [];
-        for (const alert of pending) {
+        // A `while`, not one pass over a snapshot: an alert arriving DURING the
+        // drain lands in the new queue, and with a single pass it sat there
+        // until the next reconnect — the only thing that calls catchUp.
+        while (this.queued.length > 0) {
+          const alert = this.queued.shift()!;
           try {
             if (await this.deliverOnce(alert)) posted++;
           } catch (err) {
-            console.error(`could not deliver queued alert ${alert.id}; skipping it`, err);
+            console.error(`could not deliver queued alert ${alert.id}; will retry on the next walk`, err);
           }
         }
       } finally {
@@ -176,25 +196,39 @@ export class AlertReplay {
    * progress. It is true on the live path, where the id IS the frontier.
    */
   private async deliverOnce(alert: AlertEvent, { advanceCursor = true } = {}): Promise<boolean> {
-    if (this.deliveredIds.has(alert.id)) return false;
+    if (this.deliveredIds.has(alert.id) || this.inFlightIds.has(alert.id)) return false;
 
-    // Claimed BEFORE awaiting. Marking it only on success left a window where
-    // a reconnect-triggered catchUp refetched an alert whose live delivery was
-    // still in flight and posted it a second time.
+    // Claimed BEFORE awaiting, so a concurrent walk cannot post it a second
+    // time — and recorded as in-flight, so that walk also cannot move the
+    // cursor past it while the outcome is unknown.
     this.remember(alert.id);
+    this.inFlightIds.add(alert.id);
     try {
       await this.options.deliver(alert);
+      this.failedIds.delete(alert.id);
     } catch (err) {
-      // Un-claim so the alert stays eligible for the next attempt rather than
-      // being silently consumed by a failure.
+      // Eligible again on the next walk. Safe because the cursor is held
+      // below this id for as long as it is in `failedIds`.
       this.deliveredIds.delete(alert.id);
+      this.failedIds.add(alert.id);
       throw err;
+    } finally {
+      this.inFlightIds.delete(alert.id);
     }
     // Only when nothing may still lie behind the cursor. After an aborted
     // walk there are unfetched ids below this one, and moving past them would
     // lose them.
     if (advanceCursor && this.backlogClear) this.cursor = Math.max(this.cursor, alert.id);
     return true;
+  }
+
+  /** Lowest id that must stay fetchable, or null when there is none. */
+  private lowestUnresolvedId(): number | null {
+    let lowest: number | null = null;
+    for (const id of [...this.inFlightIds, ...this.failedIds]) {
+      if (lowest === null || id < lowest) lowest = id;
+    }
+    return lowest;
   }
 
   private remember(id: number) {
