@@ -76,6 +76,19 @@ function requireWebhookSecret(): string {
 }
 const WEBHOOK_SECRET = requireWebhookSecret();
 
+// Every engine route except /webhooks/helius, and the alert socket itself,
+// now require the engine API key. Without it this script gets 401s that look
+// like the engine is broken when it is simply protected.
+const API_KEY = (() => {
+  const key = process.env.ENGINE_API_KEY;
+  if (!key) {
+    console.error('ENGINE_API_KEY is not set. Add it to .env (it must match the value the engine runs with).');
+    process.exit(1);
+  }
+  return key;
+})();
+const authed = { 'Content-Type': 'application/json', Authorization: `Bearer ${API_KEY}` };
+
 function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error(`Timed out after ${ms}ms waiting for: ${label}`)), ms);
@@ -96,7 +109,7 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
 async function createWalletViaApi(address: string, label: string): Promise<{ status: number; body: any }> {
   const res = await fetch(`${BASE}/wallets`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: authed,
     body: JSON.stringify({ address, label, isMine: true }),
   });
   const body = await res.json();
@@ -112,7 +125,7 @@ async function createWalletDirectly(address: string, label: string) {
 }
 
 async function main() {
-  const ws = new WebSocket(`ws://localhost:${PORT}/ws`);
+  const ws = new WebSocket(`ws://localhost:${PORT}/ws`, { headers: { Authorization: `Bearer ${API_KEY}` } });
   const alertReceived = new Promise<any>((resolve) => {
     ws.on('message', (data) => resolve(JSON.parse(data.toString())));
   });
@@ -169,7 +182,7 @@ async function main() {
   }
 
   console.log('4. Checking trade history via REST...');
-  const tradesRes = await fetch(`${BASE}/wallets/${wallet.id}/trades`);
+  const tradesRes = await fetch(`${BASE}/wallets/${wallet.id}/trades`, { headers: authed });
   const trades = await tradesRes.json();
   console.log('   Trades:', trades);
   if (trades.length !== 1) throw new Error('Expected exactly 1 trade');
