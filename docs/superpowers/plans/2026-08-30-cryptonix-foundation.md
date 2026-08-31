@@ -100,12 +100,17 @@ packages:
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
-    "declaration": true,
-    "outDir": "dist",
-    "rootDir": "src"
+    "declaration": true
   }
 }
 ```
+
+Deliberately no `rootDir`/`outDir` here: TypeScript resolves path-valued
+compiler options relative to the config file that *declares* them, not
+the file that extends it — so a shared `outDir`/`rootDir` in this root
+file would resolve relative to the repo root for every package, not
+each package's own directory. Each package sets `rootDir`/`outDir`
+itself (see Task 2 Step 1 and onward).
 
 - [ ] **Step 5: Create `.gitignore`**
 
@@ -206,6 +211,10 @@ git commit -m "Scaffold pnpm/Turborepo monorepo"
 ```json
 {
   "extends": "@cryptonix/config/tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "dist"
+  },
   "include": ["src"],
   "exclude": ["src/**/*.test.ts"]
 }
@@ -627,6 +636,10 @@ git commit -m "core: add FIFO PnL calculator, barrel export"
 ```json
 {
   "extends": "@cryptonix/config/tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "dist"
+  },
   "include": ["src"],
   "exclude": ["src/**/*.test.ts"]
 }
@@ -820,6 +833,10 @@ git commit -m "db: add Drizzle schema, client, and migrations"
 ```json
 {
   "extends": "@cryptonix/config/tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "dist"
+  },
   "include": ["src"],
   "exclude": ["src/**/*.test.ts"]
 }
