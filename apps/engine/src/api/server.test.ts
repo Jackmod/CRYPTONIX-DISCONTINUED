@@ -589,4 +589,25 @@ describe('engine API', () => {
     expect(res.status).toBe(401);
     expect(res.text).not.toContain('node_modules');
   });
+
+  it('registers exactly one webhook when two requests heal the same wallet at once', async () => {
+    // Both see helius_webhook_id IS NULL and both create a webhook. Only the
+    // conditional UPDATE stops the loser's from being orphaned.
+    const { app, helius } = buildAppWithMocks();
+    const created = await api(app).post('/wallets').send({ address: VALID_ADDRESS, label: 'W' });
+    await db.execute(`UPDATE wallets SET helius_webhook_id = NULL WHERE id = ${created.body.id}`);
+    helius.createWalletWebhook.mockClear();
+    helius.deleteWalletWebhook.mockClear();
+
+    await Promise.all([
+      api(app).post('/wallets').send({ address: VALID_ADDRESS, label: 'W' }),
+      api(app).post('/wallets').send({ address: VALID_ADDRESS, label: 'W' }),
+      api(app).post('/wallets').send({ address: VALID_ADDRESS, label: 'W' }),
+    ]);
+
+    const created_ = helius.createWalletWebhook.mock.calls.length;
+    const deleted = helius.deleteWalletWebhook.mock.calls.length;
+    // Every webhook beyond the one the winner kept must have been handed back.
+    expect(created_ - deleted).toBe(1);
+  });
 });

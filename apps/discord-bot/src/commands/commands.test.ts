@@ -10,6 +10,8 @@ function fakeInteraction(options: Record<string, string | boolean | null>) {
   return {
     editReply,
     interaction: {
+      // Every command is guild-only and refuses an interaction without one.
+      guildId: 'g1',
       options: {
         getSubcommand: () => 'wallet',
         getString: (name: string) => (options[name] as string) ?? null,
@@ -142,12 +144,20 @@ describe('/pnl', () => {
 
 function fakeGuildInteraction(options: { channel?: string | null; guildId?: string | null }) {
   const editReply = vi.fn();
+  // /setup now verifies it can actually post in the chosen channel before
+  // confirming, so the fixture needs a guild whose channel grants that.
+  const permissive = { has: () => true };
+  const channel = { id: options.channel ?? 'current-channel', isTextBased: () => true, permissionsFor: () => permissive };
   return {
     editReply,
     interaction: {
       guildId: options.guildId === undefined ? 'g1' : options.guildId,
       channelId: 'current-channel',
       user: { id: 'user1' },
+      guild: {
+        channels: { fetch: vi.fn().mockResolvedValue(channel) },
+        members: { me: {} },
+      },
       options: {
         getChannel: () => (options.channel ? { id: options.channel } : null),
       },
@@ -243,5 +253,88 @@ describe('/pnl month validation', () => {
     await pnlCommand.execute(interaction, { engine, guildConfigs: {} as any });
 
     expect(engine.listWallets).toHaveBeenCalled();
+  });
+});
+
+describe('DM safety', () => {
+  it('registers every command as guild-only', () => {
+    // Discord ignores default_member_permissions in DMs and commands are
+    // DM-enabled by default, so the permission gates were bypassable by
+    // anyone who simply DMed the bot. InteractionContextType.Guild is 0.
+    for (const command of [setupCommand, trackCommand, untrackCommand, pnlCommand]) {
+      const json = command.data.toJSON() as { contexts?: number[] | null };
+      expect(json.contexts, `${command.data.name} must be guild-only`).toEqual([0]);
+    }
+  });
+
+  it('refuses to act on an interaction with no guild', async () => {
+    // Defence in depth: a command registered before the contexts change could
+    // still arrive from a DM.
+    const engine = { trackWallet: vi.fn(), untrackWallet: vi.fn(), listWallets: vi.fn(), getPnl: vi.fn() } as any;
+
+    for (const command of [trackCommand, untrackCommand, pnlCommand]) {
+      const editReply = vi.fn();
+      const interaction = {
+        guildId: null,
+        options: { getSubcommand: () => 'wallet', getString: () => 'x', getBoolean: () => null },
+        deferReply: vi.fn(),
+        editReply,
+      } as any;
+
+      await command.execute(interaction, { engine, guildConfigs: {} as any });
+
+      expect(String(editReply.mock.calls[0][0]), `${command.data.name} must refuse a DM`).toContain('server');
+    }
+
+    expect(engine.trackWallet).not.toHaveBeenCalled();
+    expect(engine.untrackWallet).not.toHaveBeenCalled();
+    expect(engine.listWallets).not.toHaveBeenCalled();
+  });
+});
+
+describe('/setup channel checks', () => {
+  function guildInteractionWithChannel(permissionsFor: () => { has: (p: unknown) => boolean } | null) {
+    const editReply = vi.fn();
+    const channel = { id: 'chosen', isTextBased: () => true, permissionsFor };
+    return {
+      editReply,
+      interaction: {
+        guildId: 'g1',
+        channelId: 'chosen',
+        user: { id: 'u1' },
+        guild: {
+          channels: { fetch: vi.fn().mockResolvedValue(channel) },
+          members: { me: {} },
+        },
+        options: { getChannel: () => null },
+        deferReply: vi.fn(),
+        editReply,
+      } as any,
+    };
+  }
+
+  it('refuses a channel the bot cannot post in, and stores nothing', async () => {
+    // Confirming success for an unusable channel sends the user away believing
+    // it works while every alert fails silently into the host's console.
+    const engine = { setGuildConfig: vi.fn() } as any;
+    const guildConfigs = { set: vi.fn() } as any;
+    const { interaction, editReply } = guildInteractionWithChannel(() => ({ has: () => false }));
+
+    await setupCommand.execute(interaction, { engine, guildConfigs });
+
+    expect(engine.setGuildConfig).not.toHaveBeenCalled();
+    expect(guildConfigs.set).not.toHaveBeenCalled();
+    expect(String(editReply.mock.calls[0][0])).toContain('Send Messages');
+  });
+
+  it('stores the config when the bot has the permissions it needs', async () => {
+    const engine = { setGuildConfig: vi.fn().mockResolvedValue({}) } as any;
+    const guildConfigs = { set: vi.fn() } as any;
+    const { interaction } = guildInteractionWithChannel(() => ({ has: () => true }));
+
+    await setupCommand.execute(interaction, { engine, guildConfigs });
+
+    expect(engine.setGuildConfig).toHaveBeenCalledWith('g1', 'chosen', 'u1');
+    expect(guildConfigs.set).toHaveBeenCalledWith('g1', 'chosen');
   });
 });

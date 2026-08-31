@@ -1,6 +1,6 @@
 import type { Db } from '@cryptonix/db';
 import { wallets, walletTrades, pnlDaily, alerts } from '@cryptonix/db';
-import { eq } from 'drizzle-orm';
+import { and, eq, isNull } from 'drizzle-orm';
 import { parseSwap, buildAxiomLink, type HeliusEnhancedTransaction } from '@cryptonix/core';
 import type { HeliusClient } from '../helius/client.js';
 import type { AlertBus } from '../api/alert-bus.js';
@@ -47,7 +47,13 @@ export class WalletMonitor {
           [healed] = await this.db
             .update(wallets)
             .set({ heliusWebhookId: healedWebhookId })
-            .where(eq(wallets.id, existing.id))
+            // Only claim the row if it still has no webhook. Two concurrent
+            // requests both saw NULL, so both created one; without this guard
+            // both UPDATEs succeed and the loser's webhook is orphaned — the
+            // same invariant the insert path protects with onConflictDoNothing.
+            // The loser gets no row back and falls into the release-and-retry
+            // branch below.
+            .where(and(eq(wallets.id, existing.id), isNull(wallets.heliusWebhookId)))
             .returning();
         } catch (err) {
           // Same invariant as the insert path: a webhook exists that no row
@@ -57,9 +63,10 @@ export class WalletMonitor {
         }
 
         if (!healed) {
-          // The row was untracked between our SELECT and this UPDATE, so the
-          // webhook we just made belongs to nothing. Release it and loop —
-          // the address is free now and the next pass registers it properly.
+          // Either the row was untracked between our SELECT and this UPDATE, or
+          // a concurrent heal claimed it first. Either way the webhook we just
+          // made belongs to nothing: release it and loop, so the next pass
+          // sees the real current state.
           await this.releaseWebhook(healedWebhookId);
           continue;
         }

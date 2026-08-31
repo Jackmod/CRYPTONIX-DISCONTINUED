@@ -1,5 +1,35 @@
-import { ChannelType, PermissionFlagsBits, SlashCommandBuilder } from 'discord.js';
+import { ChannelType, InteractionContextType, PermissionFlagsBits, SlashCommandBuilder } from 'discord.js';
+import type { GuildTextBasedChannel } from 'discord.js';
 import { describeError, type BotCommand } from './types.js';
+
+/**
+ * Returns a message describing why the bot cannot post in `channelId`, or
+ * null when it can.
+ */
+async function describeChannelProblem(
+  interaction: Parameters<BotCommand['execute']>[0],
+  channelId: string
+): Promise<string | null> {
+  const channel = await interaction.guild?.channels.fetch(channelId).catch(() => null);
+  if (!channel || !channel.isTextBased()) {
+    return `⚠️ <#${channelId}> is not a text channel I can post in.`;
+  }
+
+  const me = interaction.guild?.members.me;
+  if (!me) return null; // cannot tell; do not block on a transient gap
+
+  const permissions = (channel as GuildTextBasedChannel).permissionsFor(me);
+  const missing = [
+    permissions?.has(PermissionFlagsBits.ViewChannel) ? null : 'View Channel',
+    permissions?.has(PermissionFlagsBits.SendMessages) ? null : 'Send Messages',
+    permissions?.has(PermissionFlagsBits.EmbedLinks) ? null : 'Embed Links',
+  ].filter(Boolean);
+
+  if (missing.length > 0) {
+    return `⚠️ I am missing **${missing.join('**, **')}** in <#${channelId}>. Grant those and run \`/setup\` again.`;
+  }
+  return null;
+}
 
 export const setupCommand: BotCommand = {
   data: new SlashCommandBuilder()
@@ -12,7 +42,10 @@ export const setupCommand: BotCommand = {
         .addChannelTypes(ChannelType.GuildText)
     )
     // Without this gate any member could redirect the whole server's alert feed.
-    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+    // Discord ignores default_member_permissions in DMs; the handler also
+    // checks guildId, but this keeps the command out of DMs entirely.
+    .setContexts(InteractionContextType.Guild),
 
   async execute(interaction, { engine, guildConfigs }) {
     await interaction.deferReply();
@@ -24,7 +57,17 @@ export const setupCommand: BotCommand = {
 
     // No channel argument means "here" — the common case is typing /setup in
     // the channel you want and nothing else.
-    const channelId = interaction.options.getChannel('channel')?.id ?? interaction.channelId;
+    const chosen = interaction.options.getChannel('channel');
+    const channelId = chosen?.id ?? interaction.channelId;
+
+    // Confirming success for a channel the bot cannot post in sends the user
+    // away believing it is configured, while every alert fails silently into
+    // the bot host's console. Check before promising anything.
+    const problem = await describeChannelProblem(interaction, channelId);
+    if (problem) {
+      await interaction.editReply(problem);
+      return;
+    }
 
     try {
       await engine.setGuildConfig(interaction.guildId, channelId, interaction.user.id);

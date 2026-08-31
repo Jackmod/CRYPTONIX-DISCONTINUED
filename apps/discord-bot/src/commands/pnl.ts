@@ -1,4 +1,4 @@
-import { SlashCommandBuilder } from 'discord.js';
+import { InteractionContextType, SlashCommandBuilder } from 'discord.js';
 import { buildPnlEmbed } from '../embeds/pnl.js';
 import { describeError, type BotCommand } from './types.js';
 
@@ -22,10 +22,22 @@ export const pnlCommand: BotCommand = {
     .setName('pnl')
     .setDescription('Show realized PnL for a wallet')
     .addStringOption((opt) => opt.setName('wallet').setDescription('Wallet label or address'))
-    .addStringOption((opt) => opt.setName('month').setDescription('Month as YYYY-MM')),
+    .addStringOption((opt) => opt.setName('month').setDescription('Month as YYYY-MM'))
+    // Read-only, but it exposes the shared wallet list and its PnL. In a DM
+    // there is no server whose membership could gate that, so keep it in
+    // guilds where the server's own access controls apply.
+    .setContexts(InteractionContextType.Guild),
 
   async execute(interaction, { engine }) {
     await interaction.deferReply();
+
+    // Defence in depth: setContexts keeps this out of DMs, but a command
+    // registered before that change could still arrive from one, and Discord
+    // enforces no permission gate there.
+    if (!interaction.guildId) {
+      await interaction.editReply('⚠️ This command only works inside a server, not in a DM.');
+      return;
+    }
 
     const month = interaction.options.getString('month') ?? currentMonth();
     if (!isValidMonth(month)) {

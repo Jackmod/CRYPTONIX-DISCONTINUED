@@ -1,4 +1,4 @@
-import { PermissionFlagsBits, SlashCommandBuilder } from 'discord.js';
+import { InteractionContextType, PermissionFlagsBits, SlashCommandBuilder } from 'discord.js';
 import { describeError, shortAddress, type BotCommand } from './types.js';
 
 export const untrackCommand: BotCommand = {
@@ -15,10 +15,22 @@ export const untrackCommand: BotCommand = {
     // deletes that wallet's wallet_trades and pnl_daily rows outright. Live
     // webhook deliveries cannot be re-fetched, so an unprivileged member of
     // any one guild could permanently destroy every other guild's history.
-    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
+        .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+    // Discord ignores default_member_permissions in DMs, and commands are
+    // DM-enabled by default -- so without this the permission gate above was
+    // bypassable by anyone who simply DMed the bot.
+    .setContexts(InteractionContextType.Guild),
 
   async execute(interaction, { engine }) {
     await interaction.deferReply();
+    // Defence in depth: setContexts keeps this out of DMs, but a command
+    // registered before that change could still arrive from one, and Discord
+    // enforces no permission gate there.
+    if (!interaction.guildId) {
+      await interaction.editReply('⚠️ This command only works inside a server, not in a DM.');
+      return;
+    }
+
     const address = interaction.options.getString('address', true);
 
     try {
