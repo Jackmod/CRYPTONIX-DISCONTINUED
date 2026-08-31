@@ -855,3 +855,64 @@ describe('AlertReplay: a reconnect during the drain', () => {
     expect([...posted].sort((a, b) => a - b)).toEqual([101, 102, 103, 104]);
   });
 });
+
+describe('AlertReplay: cursor persistence', () => {
+  it('coalesces saves instead of queueing one per page', async () => {
+    // walkBacklog advances once per page. Without coalescing a large backlog
+    // queues one round-trip per page of which only the last matters, and
+    // saveCursor has no timeout, so one hung request blocks all the rest.
+    let releaseSave: () => void = () => {};
+    let saveGate: () => void = () => {};
+    const saveStarted = new Promise<void>((resolve) => (saveGate = resolve));
+
+    const saved: number[] = [];
+    const stored = Array.from({ length: 20 }, (_, i) => alert(i + 1));
+    const replay = new AlertReplay({
+      listAlertsSince: vi.fn(async (since: number) => stored.filter((a) => a.id > since).slice(0, PAGE)),
+      getAlertHead: vi.fn(async () => 0),
+      deliver: vi.fn(async () => {}),
+      pageSize: PAGE,
+      saveCursor: vi.fn(async (c: number) => {
+        saved.push(c);
+        if (saved.length === 1) {
+          saveGate();
+          await new Promise<void>((resolve) => (releaseSave = resolve));
+        }
+      }),
+    });
+    await replay.start();
+
+    const walking = replay.catchUp();
+    await saveStarted; // the first save is in flight and blocked
+    await walking; // the whole walk runs while it is still blocked
+
+    releaseSave();
+    await new Promise((r) => setTimeout(r, 10)); // let the coalesced save land
+
+    // Four pages, but only two writes: the one that was in flight, and a
+    // single collapsed value for everything that happened during it.
+    expect(saved).toEqual([5, 20]);
+    expect(replay.resumeFrom).toBe(20);
+  });
+
+  it('never persists a lower cursor than one already requested', async () => {
+    const saved: number[] = [];
+    const replay = new AlertReplay({
+      listAlertsSince: vi.fn(async () => []),
+      getAlertHead: vi.fn(async () => 0),
+      deliver: vi.fn(async () => {}),
+      pageSize: PAGE,
+      saveCursor: vi.fn(async (c: number) => {
+        saved.push(c);
+      }),
+    });
+    await replay.start();
+
+    await replay.handleLive(alert(10));
+    await replay.handleLive(alert(20));
+    await new Promise((r) => setTimeout(r, 10));
+
+    expect(saved).toEqual([...saved].sort((a, b) => a - b));
+    expect(saved[saved.length - 1]).toBe(20);
+  });
+});

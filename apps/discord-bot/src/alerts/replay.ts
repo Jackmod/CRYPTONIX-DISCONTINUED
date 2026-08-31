@@ -87,7 +87,8 @@ export class AlertReplay {
    */
   private failureCounts = new Map<number, number>();
   private rerunRequested = false;
-  private persistChain: Promise<void> = Promise.resolve();
+  private pendingPersist: number | null = null;
+  private persisting = false;
   private highestPersistRequested = 0;
   private queued: AlertEvent[] = [];
   private deliveredIds = new Set<number>();
@@ -354,13 +355,37 @@ export class AlertReplay {
     if (!this.options.saveCursor) return;
     if (cursor <= this.highestPersistRequested) return;
     this.highestPersistRequested = cursor;
+    this.pendingPersist = cursor;
+    void this.flushPersist();
+  }
 
-    // Chained, so two saves cannot be in flight at once. Best-effort: losing a
-    // save costs a replay after a restart, whereas throwing here would abort a
-    // walk that has already delivered its alerts.
-    this.persistChain = this.persistChain
-      .then(() => this.options.saveCursor!(cursor))
-      .catch((err) => console.error(`could not persist alert cursor ${cursor}`, err));
+  /**
+   * Writes the newest requested cursor, one save at a time.
+   *
+   * Coalescing matters: walkBacklog advances once per page, so a 10k-alert
+   * backlog would otherwise queue 200 chained round-trips of which only the
+   * last carries any information — and `saveCursor` has no timeout, so one
+   * hung request would block every save behind it. Advances arriving while a
+   * save is in flight simply replace the pending value.
+   */
+  private async flushPersist(): Promise<void> {
+    if (this.persisting) return;
+    this.persisting = true;
+    try {
+      while (this.pendingPersist !== null) {
+        const value = this.pendingPersist;
+        this.pendingPersist = null;
+        try {
+          await this.options.saveCursor!(value);
+        } catch (err) {
+          // Best-effort: losing a save costs a replay after a restart, whereas
+          // throwing here would abort a walk that already delivered its alerts.
+          console.error(`could not persist alert cursor ${value}`, err);
+        }
+      }
+    } finally {
+      this.persisting = false;
+    }
   }
 
   /** Lowest id that must stay fetchable, or null when there is none. */

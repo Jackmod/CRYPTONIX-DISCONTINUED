@@ -434,10 +434,14 @@ export function createServer(
     // considering lost trades "delivered".
     const affectedWalletIds = await walletMonitor.handleWebhookPayload(Array.isArray(body) ? body : [body]);
 
-    // Recompute PnL for every wallet that got a live trade, and do it BEFORE
-    // responding 200: if a recompute throws, we still want Helius to retry
-    // the batch (consistent with the batch-failure handling above), rather
-    // than reporting success while PnL is left stale.
+    // Recompute PnL for every wallet this batch is ABOUT — including ones
+    // whose trades were already recorded. That is what makes the retry below
+    // actually work: on a redelivery every trade looks like a duplicate, so a
+    // "new trades only" set was empty and the failed recompute never re-ran.
+    //
+    // Done BEFORE responding 200: if a recompute throws, we still want Helius
+    // to retry the batch (consistent with the batch-failure handling above),
+    // rather than reporting success while PnL is left stale.
     for (const walletId of affectedWalletIds) {
       await pnlTracker.recomputePnl(walletId);
     }
