@@ -11,7 +11,6 @@ const REQUIRED = {
   DISCORD_TOKEN: 'token1',
   DISCORD_CLIENT_ID: 'client1',
   DISCORD_GUILD_ID: 'guild1',
-  DISCORD_ALERT_CHANNEL_ID: 'channel1',
   ENGINE_HTTP_URL: 'http://localhost:8787',
   ENGINE_WS_URL: 'ws://localhost:8787/ws',
 };
@@ -32,15 +31,25 @@ describe('env', () => {
     const { env } = await import('./env');
 
     expect(env.discordToken).toBe('token1');
-    expect(env.alertChannelId).toBe('channel1');
     expect(env.engineWsUrl).toBe('ws://localhost:8787/ws');
   });
 
   it('throws a named error when a variable is missing', async () => {
     // Failing loudly at startup beats a bot that logs in fine and then
-    // silently posts nothing because the channel id was undefined.
-    delete process.env.DISCORD_ALERT_CHANNEL_ID;
+    // silently does nothing because a URL was undefined.
+    delete process.env.ENGINE_WS_URL;
 
-    await expect(import('./env')).rejects.toThrow('DISCORD_ALERT_CHANNEL_ID');
+    await expect(import('./env')).rejects.toThrow('ENGINE_WS_URL');
+  });
+
+  it('treats DISCORD_GUILD_ID as an optional dev convenience', async () => {
+    // Commands register globally so the bot works in servers it has never
+    // seen. A dev guild id, when present, additionally registers there for
+    // instant availability instead of waiting for global propagation.
+    delete process.env.DISCORD_GUILD_ID;
+
+    const { env } = await import('./env');
+
+    expect(env.devGuildId).toBeUndefined();
   });
 });

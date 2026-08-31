@@ -10,6 +10,13 @@ export interface Wallet {
   addedAt: string;
 }
 
+export interface GuildConfig {
+  guildId: string;
+  alertChannelId: string;
+  setupBy: string | null;
+  setupAt: string;
+}
+
 /**
  * Every failure reaching a command handler is one of these, so handlers can
  * branch on `status` instead of sniffing error messages. `status: 0` means the
@@ -62,5 +69,19 @@ export class EngineClient {
   async getPnl(walletId: number): Promise<DailyPnlRow[]> {
     const res = await this.request(`/wallets/${walletId}/pnl`);
     return res.json() as Promise<DailyPnlRow[]>;
+  }
+
+  async listGuildConfigs(): Promise<GuildConfig[]> {
+    const res = await this.request('/discord/guilds');
+    return res.json() as Promise<GuildConfig[]>;
+  }
+
+  async setGuildConfig(guildId: string, alertChannelId: string, setupBy?: string): Promise<GuildConfig> {
+    const res = await this.request(`/discord/guilds/${guildId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ alertChannelId, setupBy }),
+    });
+    return res.json() as Promise<GuildConfig>;
   }
 }

@@ -72,4 +72,33 @@ describe('EngineClient', () => {
     expect(error).toBeInstanceOf(EngineError);
     expect(error.status).toBe(0);
   });
+
+  it('lists guild configs', async () => {
+    (fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => [{ guildId: 'g1', alertChannelId: 'c1' }],
+    });
+
+    const configs = await new EngineClient('http://engine:8787').listGuildConfigs();
+
+    expect(configs[0].guildId).toBe('g1');
+    expect((fetch as ReturnType<typeof vi.fn>).mock.calls[0][0]).toBe('http://engine:8787/discord/guilds');
+  });
+
+  it('stores a guild config with PUT', async () => {
+    (fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ guildId: 'g1', alertChannelId: 'c2' }),
+    });
+
+    const config = await new EngineClient('http://engine:8787').setGuildConfig('g1', 'c2', 'user1');
+
+    expect(config.alertChannelId).toBe('c2');
+    const [url, options] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(url).toBe('http://engine:8787/discord/guilds/g1');
+    expect(options.method).toBe('PUT');
+    expect(JSON.parse(options.body)).toEqual({ alertChannelId: 'c2', setupBy: 'user1' });
+  });
 });

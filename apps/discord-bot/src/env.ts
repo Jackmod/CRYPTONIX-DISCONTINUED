@@ -32,8 +32,12 @@ function required(name: string): string {
 export const env = {
   discordToken: required('DISCORD_TOKEN'),
   discordClientId: required('DISCORD_CLIENT_ID'),
-  discordGuildId: required('DISCORD_GUILD_ID'),
-  alertChannelId: required('DISCORD_ALERT_CHANNEL_ID'),
+  // Optional. Commands register globally so the bot works in any server;
+  // when this is set they ALSO register to that one guild, which Discord
+  // makes available instantly rather than after global propagation.
+  devGuildId: process.env.DISCORD_GUILD_ID || undefined,
+  // DISCORD_ALERT_CHANNEL_ID is deliberately absent: alert routing is
+  // per-server, stored in discord_guilds and set with /setup.
   engineHttpUrl: required('ENGINE_HTTP_URL'),
   engineWsUrl: required('ENGINE_WS_URL'),
 };
