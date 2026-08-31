@@ -1,0 +1,25 @@
+{
+  "name": "@cryptonix/db",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "db:generate": "drizzle-kit generate",
+    "db:push": "drizzle-kit push"
+  },
+  "dependencies": {
+    "drizzle-orm": "^0.36.0",
+    "pg": "^8.13.0"
+  },
+  "devDependencies": {
+    "@cryptonix/config": "workspace:*",
+    "drizzle-kit": "^0.28.0",
+    "@types/pg": "^8.11.0",
+    "vitest": "^2.1.0",
+    "typescript": "^5.6.0"
+  }
+}
