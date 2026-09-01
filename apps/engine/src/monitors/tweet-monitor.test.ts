@@ -214,6 +214,36 @@ describe('TweetMonitor', () => {
     expect(rows.find((r) => r.handle === 'cobie')?.lastTweetId).toBe('8');
   });
 
+  it('ignores a tweet from an account nobody follows', async () => {
+    // A source answering with a retweet or quote reports the ORIGINAL author,
+    // and posting that means announcing someone nobody asked to follow.
+    await track('ansem', '1');
+    const spy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { monitor, published } = buildMonitor([
+      tweet({ id: '5', authorHandle: 'ansem' }),
+      tweet({ id: '6', authorHandle: 'somebody-else' }),
+    ]);
+
+    expect(await monitor.poll()).toBe(1);
+    expect(published).toHaveLength(1);
+    expect((published[0].payload as { authorHandle: string }).authorHandle).toBe('ansem');
+
+    const stored = await db.select().from(tweets);
+    expect(stored.map((t) => t.handle)).toEqual(['ansem']);
+    spy.mockRestore();
+  });
+
+  it('does not let an untracked author move anybody watermark', async () => {
+    await track('ansem', '1');
+    const spy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { monitor } = buildMonitor([tweet({ id: '99', authorHandle: 'stranger' })]);
+    await monitor.poll();
+
+    const [row] = await db.select().from(trackedHandles);
+    expect(row.lastTweetId).toBe('1');
+    spy.mockRestore();
+  });
+
   it('lowercases the handle it stores, so casing cannot split one account in two', async () => {
     await track('ansem', '1');
     const { monitor, published } = buildMonitor([tweet({ id: '5', authorHandle: 'Ansem' })]);

@@ -47,7 +47,9 @@ export class TweetMonitor {
 
     const sinceIds = new Map<string, string>();
     const firstTime = new Set<string>();
+    const tracked = new Set<string>();
     for (const row of handles) {
+      tracked.add(row.handle);
       if (row.lastTweetId === null) firstTime.add(row.handle);
       else sinceIds.set(row.handle, row.lastTweetId);
     }
@@ -67,6 +69,16 @@ export class TweetMonitor {
 
     for (const tweet of ordered) {
       const handle = tweet.authorHandle.toLowerCase();
+
+      // Only accounts actually being followed. A source answering with a
+      // retweet or a quote reports the ORIGINAL author, and posting that would
+      // mean the bot announcing someone nobody asked to follow — and storing a
+      // row whose watermark no tracked handle owns.
+      if (!tracked.has(handle)) {
+        console.warn(`tweet monitor: ignoring ${tweet.id} from untracked @${handle}`);
+        continue;
+      }
+
       const previous = newestByHandle.get(handle);
       if (previous === undefined || isNewerTweetId(tweet.id, previous)) {
         newestByHandle.set(handle, tweet.id);
