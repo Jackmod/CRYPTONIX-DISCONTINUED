@@ -1,0 +1,110 @@
+/*
+ * Cryptonix design tokens.
+ *
+ * The reference is the amber-phosphor CRT trading terminal — the ancestor of
+ * every modern trading screen — rather than a generic dark dashboard.
+ *
+ * The load-bearing rule, and the reason the accent is amber rather than the
+ * usual green: GREEN AND RED MEAN MONEY, AND NOTHING ELSE. In a trading
+ * interface, an accent that also means "selected tab" or "online" dilutes the
+ * one signal a trader actually reads at a glance. Amber carries every UI
+ * affordance so the P&L colours stay uncontaminated.
+ */
+:root {
+  /* Ground. Blue-cast rather than neutral black: pure #000 makes the amber
+     look orange and the whole surface look like a void rather than a screen. */
+  --void: #0a0c10;
+  --panel: #12161d;
+  --panel-raised: #171c25;
+  --rule: #1e242e;
+  --rule-bright: #2b3542;
+
+  /* The accent. P3 amber, the colour of a phosphor terminal. */
+  --phosphor: #ffb000;
+  --phosphor-dim: #8a6100;
+  --phosphor-glow: rgba(255, 176, 0, 0.14);
+
+  /* Text, on a deliberate three-step ramp so hierarchy never needs weight. */
+  --text: #c9d1d9;
+  --text-bright: #f0f6fc;
+  --dim: #6e7681;
+  --dimmer: #484f58;
+
+  /* Money. Never used for anything else. */
+  --gain: #3fb950;
+  --loss: #f85149;
+
+  /* Type. No webfont: a desktop app should not depend on the network to
+     render, and on each platform this resolves to that platform's real
+     terminal face — Cascadia Mono on Windows — which IS the aesthetic. */
+  --mono: ui-monospace, 'Cascadia Mono', 'SF Mono', 'JetBrains Mono', Menlo, Consolas, monospace;
+  --sans: 'Inter', ui-sans-serif, system-ui, 'Segoe UI', sans-serif;
+
+  /* A 4px rhythm, tight on purpose: this is a dense terminal, not a
+     marketing page. Every gap is a multiple of it. */
+  --s1: 4px;
+  --s2: 8px;
+  --s3: 12px;
+  --s4: 16px;
+  --s5: 24px;
+  --s6: 32px;
+
+  --nav-w: 184px;
+  --rail-w: 312px;
+
+  /* Sharp. A terminal has no rounded corners; the 2px is only enough to stop
+     hairlines looking like rendering artefacts. */
+  --radius: 2px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--void);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 13px;
+  line-height: 1.45;
+  /* Tabular figures everywhere: columns of numbers that do not align are
+     unreadable at a glance, which is the whole job of this interface. */
+  font-variant-numeric: tabular-nums;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Keyboard focus must always be visible; amber so it reads as UI, not P&L. */
+:focus-visible {
+  outline: 1px solid var(--phosphor);
+  outline-offset: 1px;
+}
+
+::selection {
+  background: var(--phosphor-glow);
+  color: var(--text-bright);
+}
+
+/* Scrollbars, styled to disappear into the panel rather than punch a light
+   hole through a dark interface. */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--rule-bright);
+  border: 3px solid var(--void);
+  border-radius: 5px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--dimmer);
+}

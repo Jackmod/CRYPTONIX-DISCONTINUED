@@ -3,7 +3,8 @@
 Solana wallet tracking. The engine watches wallets you follow, records their
 swaps as they happen, computes realized PnL in SOL, and pushes an alert the
 moment one of them trades. The Discord bot turns those alerts into embeds with
-a one-click Axiom link, and answers `/pnl`.
+a one-click Axiom link, and answers `/pnl`. The desktop app shows the same
+data on a live terminal-style dashboard.
 
 No trades are ever placed. Cryptonix produces links, never orders.
 
@@ -13,6 +14,7 @@ No trades are ever placed. Cryptonix produces links, never orders.
 |---|---|
 | `apps/engine` | The service. Helius webhooks in, trades and PnL in Postgres, REST + WebSocket out. Optional new-coin scanner. |
 | `apps/discord-bot` | discord.js process. Alerts as embeds, plus `/setup`, `/track`, `/untrack`, `/pnl`. |
+| `apps/desktop` | Tauri + React desktop app. Wallets, coins, PnL calendar, and a live feed. |
 | `packages/core` | Pure domain logic: Axiom links, swap parsing, FIFO PnL, the heatmap, coin momentum. No I/O. |
 | `packages/db` | Drizzle schema, migrations, and the Postgres client. |
 | `tests/e2e` | A real engine on a real port against real Postgres, with the real bot pipeline wired to it. |
@@ -24,6 +26,7 @@ the implementation plans are alongside it in `docs/superpowers/plans/`.
 
 - Node 20+ and pnpm
 - Docker (for local Postgres)
+- **Rust** (only to build the desktop app) — https://rustup.rs
 - A free **Helius** API key — https://www.helius.dev
 - A **Discord application** — https://discord.com/developers/applications
 - **ngrok** or equivalent, so Helius can reach your machine
@@ -73,6 +76,24 @@ pnpm --filter @cryptonix/engine dev
 pnpm --filter @cryptonix/discord-bot dev
 ```
 
+The desktop app is a fourth, and optional — the bot does not need it:
+
+```bash
+pnpm --filter @cryptonix/desktop tauri dev     # native window
+pnpm --filter @cryptonix/desktop dev           # or just in a browser, on :5173
+```
+
+On first run, open **Settings** and paste the same `ENGINE_API_KEY` the engine
+uses. The URLs default to `http://localhost:8787` and `ws://localhost:8787/ws`.
+Settings are stored on that machine only, never in the repo.
+
+To produce installers (`.msi` and `.exe` on Windows, `.dmg` on macOS,
+`.deb`/`.AppImage` on Linux):
+
+```bash
+pnpm --filter @cryptonix/desktop tauri build
+```
+
 Register the slash commands once (and again whenever they change):
 
 ```bash
@@ -94,16 +115,21 @@ shared by every server the bot is in, so untracking affects all of them.
 ## How it fits together
 
 ```
-Helius ──webhook──▶ engine ──┬──▶ Postgres (trades, FIFO PnL)
+                             ┌──▶ Postgres (trades, FIFO PnL)
                              │
-                             └──▶ WebSocket ──▶ Discord bot ──▶ your channels
-                                                     │
-                     REST ◀───────────────────────────┘  (slash commands)
+Helius ──webhook──▶ engine ──┼──▶ WebSocket ──┬──▶ Discord bot ──▶ your channels
+                             │                └──▶ desktop app ──▶ live feed
+                             │
+                             └──▶ REST ───────┬──▶ Discord bot  (slash commands)
+                                              └──▶ desktop app  (tables, PnL)
 ```
 
-The bot owns no database. Every read and write goes through the engine, which
-is the single writer — so a bot crash cannot corrupt state, and the Phase 4
-desktop app will see exactly the same wallet list with no syncing code.
+The bot and the app own no database. Every read and write goes through the
+engine, which is the single writer — so a crash on either side cannot corrupt
+state, and both see exactly the same wallet list with no syncing code. A wallet
+added in the app's **Settings** is the row `/track wallet` creates in Discord,
+and the reverse; the app re-reads the list every 20 seconds, because tracking
+publishes no alert for the socket to carry.
 
 Alerts the bot misses while it is disconnected are not lost: the engine records
 every alert, and the bot replays anything published since its stored cursor

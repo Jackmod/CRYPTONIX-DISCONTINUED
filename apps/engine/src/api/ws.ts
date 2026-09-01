@@ -17,6 +17,24 @@ export function attachWebSocket(server: Server, alertBus: AlertBus, apiKey: stri
         done(true);
         return;
       }
+
+      // The browser WebSocket API cannot set request headers, so the desktop
+      // app has no way to send Authorization on an upgrade. A query parameter
+      // is the only option available to it.
+      //
+      // The trade-off is real and accepted deliberately: query strings are
+      // more likely to be written to access logs than headers are. It is
+      // bounded by the same key already guarding every REST route, the engine
+      // is expected to sit behind a tunnel rather than on a public port, and
+      // the alternative is a desktop app that cannot connect at all.
+      // Compared in constant time, exactly like the header path.
+      const url = new URL(req.url ?? '/', 'http://placeholder');
+      const fromQuery = url.searchParams.get('apiKey');
+      if (fromQuery !== null && isValidBearer(`Bearer ${fromQuery}`, apiKey)) {
+        done(true);
+        return;
+      }
+
       done(false, 401, 'Unauthorized');
     },
   });

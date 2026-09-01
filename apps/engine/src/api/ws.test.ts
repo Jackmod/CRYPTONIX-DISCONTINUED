@@ -112,3 +112,46 @@ describe('attachWebSocket', () => {
     spy.terminate();
   });
 });
+
+describe('attachWebSocket: browser clients', () => {
+  let server2: Server;
+  afterEach(() => server2?.close());
+
+  async function boot2() {
+    server2 = createServer();
+    const wss = attachWebSocket(server2, new AlertBus(), API_KEY);
+    await new Promise<void>((resolve) => server2.listen(0, resolve));
+    const address = server2.address();
+    if (typeof address !== 'object' || address === null) throw new Error('expected a bound port');
+    return { wss, port: address.port };
+  }
+
+  function connectTo(url: string): Promise<boolean> {
+    return new Promise((resolve) => {
+      const client = new WebSocket(url);
+      const settle = (accepted: boolean) => {
+        client.removeAllListeners();
+        client.on('error', () => {});
+        client.terminate();
+        resolve(accepted);
+      };
+      client.on('open', () => settle(true));
+      client.on('error', () => settle(false));
+      client.on('unexpected-response', () => settle(false));
+    });
+  }
+
+  it('accepts the key as a query parameter, since a browser cannot send headers', async () => {
+    const { port } = await boot2();
+
+    expect(await connectTo(`ws://localhost:${port}/ws?apiKey=${encodeURIComponent(API_KEY)}`)).toBe(true);
+  });
+
+  it('still refuses a wrong or empty query key', async () => {
+    const { port } = await boot2();
+
+    expect(await connectTo(`ws://localhost:${port}/ws?apiKey=wrong`)).toBe(false);
+    expect(await connectTo(`ws://localhost:${port}/ws?apiKey=`)).toBe(false);
+    expect(await connectTo(`ws://localhost:${port}/ws`)).toBe(false);
+  });
+});

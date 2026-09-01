@@ -5,3 +5,10 @@ dist
 .turbo
 .superpowers
 .claude/worktrees/
+
+# Tauri build output
+apps/desktop/src-tauri/target
+apps/desktop/src-tauri/gen
+
+# Playwright MCP scratch output
+.playwright-mcp
