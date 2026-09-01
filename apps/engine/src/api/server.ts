@@ -1,6 +1,6 @@
 import express, { type Express, type NextFunction, type Request, type Response } from 'express';
 import { timingSafeEqual } from 'node:crypto';
-import { and, desc, eq, gt, lt } from 'drizzle-orm';
+import { and, desc, eq, gt, sql } from 'drizzle-orm';
 import type { Db } from '@cryptonix/db';
 import { wallets, walletTrades, pnlDaily, discordGuilds, alerts, clientState } from '@cryptonix/db';
 import type { HeliusEnhancedTransaction } from '@cryptonix/core';
@@ -327,11 +327,22 @@ export function createServer(
       // 101 can be visible while 100 is still in flight. A client walking in
       // that window advances its cursor to 101, and 100 -- which it also never
       // saw live -- becomes unreachable, since the filter is strictly `> since`.
-      const settledBefore = new Date(Date.now() - alertSettleMs);
+      //
+      // The comparison happens in SQL, against the database's own clock.
+      // alerts.ts is `timestamp without time zone` written by now(), so it
+      // carries the session's local wall clock; comparing it to a bound
+      // derived from Node's Date.now() made every row look unsettled for the
+      // whole UTC offset on a database east of UTC — catch-up would return
+      // empty pages and silently deliver nothing for hours.
       const rows = await db
         .select()
         .from(alerts)
-        .where(and(gt(alerts.id, since), lt(alerts.ts, settledBefore)))
+        .where(
+          and(
+            gt(alerts.id, since),
+            sql`${alerts.ts} < now() - make_interval(secs => ${alertSettleMs / 1000})`
+          )
+        )
         .orderBy(alerts.id)
         .limit(MAX_ALERT_REPLAY);
       res.json(rows);

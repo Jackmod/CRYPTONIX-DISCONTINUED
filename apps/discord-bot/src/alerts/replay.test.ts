@@ -1028,3 +1028,51 @@ describe('AlertReplay: flushing on shutdown', () => {
     expect(saved).toContain(1);
   });
 });
+
+describe('AlertReplay: pacing a long backlog', () => {
+  it('does not empty a huge backlog into a channel in one burst', async () => {
+    // The engine's page cap bounds one HTTP response, not a run: walkBacklog
+    // pages through everything, so a weekend outage dumped thousands of stale
+    // embeds into every configured channel at once.
+    const stored = Array.from({ length: 60 }, (_, i) => alert(i + 1));
+    const posted: number[] = [];
+    const replay = new AlertReplay({
+      listAlertsSince: vi.fn(async (since: number) => stored.filter((a) => a.id > since).slice(0, PAGE)),
+      getAlertHead: vi.fn(async () => 0),
+      deliver: vi.fn(async (a: AlertEvent) => {
+        posted.push(a.id);
+      }),
+      pageSize: PAGE,
+      maxPerRun: 12,
+    });
+    await replay.start();
+
+    const firstRun = await replay.catchUp();
+    expect(firstRun).toBeLessThanOrEqual(15); // a page may overshoot slightly
+    expect(posted.length).toBeLessThan(60);
+
+    // The remainder is picked up by later runs, and nothing is lost.
+    for (let i = 0; i < 10; i++) await replay.catchUp();
+    expect([...posted].sort((a, b) => a - b)).toEqual(stored.map((a) => a.id));
+    expect(new Set(posted).size).toBe(60);
+  });
+
+  it('remembers far more ids than one run can post', async () => {
+    // The de-duplication set has to outlast the window in which a pinned
+    // cursor keeps re-walking, or those alerts are posted twice.
+    const replay = new AlertReplay({
+      listAlertsSince: vi.fn(async () => []),
+      getAlertHead: vi.fn(async () => 0),
+      deliver: vi.fn(async () => {}),
+      pageSize: PAGE,
+    });
+    await replay.start();
+
+    // Defaults: 200 per run, 10,000 remembered - two orders of magnitude of
+    // headroom over a single run.
+    for (const id of [1, 2, 3]) await replay.handleLive(alert(id));
+    for (const id of [1, 2, 3]) await replay.handleLive(alert(id));
+
+    expect(replay.resumeFrom).toBe(3);
+  });
+});

@@ -9,8 +9,25 @@ export interface AlertReplayOptions {
   deliver(alert: AlertEvent): Promise<void>;
   /** Must match the engine's page cap. */
   pageSize: number;
-  /** Ids remembered for de-duplication. */
+  /**
+   * Ids remembered for de-duplication. Defaults to 10,000.
+   *
+   * Sized against the pin window, not chosen freely. One undeliverable alert
+   * holds the cursor below it until it is given up on, and every sweep in the
+   * meantime re-walks from there; if more ids than this arrive first, the set
+   * rolls over and those alerts are posted a second time. With the per-run cap
+   * below, 10,000 covers far more than the give-up window can span.
+   */
   maxRememberedIds?: number;
+  /**
+   * Most alerts to post in one catch-up run. Defaults to 200.
+   *
+   * The engine's page cap bounds one HTTP response, not a run — walkBacklog
+   * pages through the whole backlog, so a weekend outage dumped thousands of
+   * stale embeds into every configured channel in a single burst. The rest is
+   * picked up by the next sweep.
+   */
+  maxPerRun?: number;
   /**
    * Delivery attempts before an alert is given up on. Defaults to 20.
    *
@@ -115,9 +132,11 @@ export class AlertReplay {
   private readonly maxRememberedIds: number;
 
   private readonly maxAttempts: number;
+  private readonly maxPerRun: number;
 
   constructor(private options: AlertReplayOptions) {
-    this.maxRememberedIds = options.maxRememberedIds ?? 1_000;
+    this.maxRememberedIds = options.maxRememberedIds ?? 10_000;
+    this.maxPerRun = options.maxPerRun ?? 200;
     this.maxAttempts = options.maxAttempts ?? 20;
   }
 
@@ -301,6 +320,13 @@ export class AlertReplay {
     let fetchFrom = this.cursor;
 
     for (;;) {
+      // Stop well short of emptying a long backlog in one burst; the sweep
+      // comes back for the rest.
+      if (posted >= this.maxPerRun) {
+        console.log(`replayed ${posted} alert(s); pausing until the next sweep`);
+        break;
+      }
+
       const page = await this.options.listAlertsSince(fetchFrom);
       if (page.length === 0) break;
 
