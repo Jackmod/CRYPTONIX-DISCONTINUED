@@ -4,21 +4,48 @@ import { CoinLogo } from '../components/CoinLogo';
 import { compactUsd, shortAddress } from '../components/Money';
 import { ExternalLink } from '../components/ExternalLink';
 
+/**
+ * How long ago the scanner found this, in the shortest form that is still true.
+ *
+ * The Age column is the token's age WHEN IT WAS FOUND, which is what the
+ * momentum score was computed against and never changes. How stale the signal
+ * is now is a different number, and the one that decides whether it is still
+ * worth acting on.
+ */
+function foundAgo(firstSeenAt: string, now: number): string {
+  const minutes = Math.floor((now - new Date(firstSeenAt).getTime()) / 60_000);
+  if (!Number.isFinite(minutes) || minutes < 0) return '—';
+  if (minutes < 1) return 'just now';
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  return `${Math.floor(hours / 24)}d ago`;
+}
+
 /** Ranked momentum list from the scanner, Axiom button per row (spec §5.3). */
-export function CoinsTab({ engine }: { engine: EngineClient }) {
+export function CoinsTab({ engine, liveToken = 0 }: { engine: EngineClient; liveToken?: number }) {
   const [coins, setCoins] = useState<Coin[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  // Re-read when an alert lands: the scanner publishes a new coin over the
+  // same socket, and a list that never refreshes goes stale while it is open.
   useEffect(() => {
     let cancelled = false;
     engine
       .listCoins()
-      .then((rows) => !cancelled && setCoins(rows))
+      .then((rows) => {
+        if (cancelled) return;
+        setCoins(rows);
+        setError(null);
+      })
       .catch((err) => !cancelled && setError((err as Error).message));
     return () => {
       cancelled = true;
     };
-  }, [engine]);
+  }, [engine, liveToken]);
+
+  // Fixed once per render, so every row's "ago" is measured from one instant.
+  const now = Date.now();
 
   return (
     <>
@@ -44,10 +71,11 @@ export function CoinsTab({ engine }: { engine: EngineClient }) {
               <tr>
                 <th>Coin</th>
                 <th>Momentum</th>
-                <th className="num">Age</th>
+                <th className="num" title="The token's age when the scanner found it">Age at find</th>
                 <th className="num">5m volume</th>
                 <th className="num">5m change</th>
                 <th className="num">Buys / sells</th>
+                <th className="num">Found</th>
                 <th></th>
               </tr>
             </thead>
@@ -88,6 +116,9 @@ export function CoinsTab({ engine }: { engine: EngineClient }) {
                     </td>
                     <td className="num">
                       {s.buys5m ?? 0} / {s.sells5m ?? 0}
+                    </td>
+                    <td className="num" style={{ color: 'var(--dim)' }} title={coin.firstSeenAt}>
+                      {foundAgo(coin.firstSeenAt, now)}
                     </td>
                     <td>
                       <ExternalLink className="btn btn-primary" href={`https://axiom.trade/t/${coin.mint}`}>

@@ -9,6 +9,7 @@ import {
   WEBHOOK_SECRET,
   type E2EStack,
 } from './harness.js';
+import { walletChoices, buildWalletsEmbed, buildPnlReply } from '@cryptonix/discord-bot';
 
 let stack: E2EStack;
 
@@ -310,4 +311,72 @@ describe('end-to-end: catch-up cursor', () => {
 
     expect(await stack.engine.listAlertsSince(0)).toHaveLength(0);
   }, 30_000);
+});
+
+describe('end-to-end: the desktop app reads what the bot reads', () => {
+  it('serves the newest alerts to a viewer, not the oldest page', async () => {
+    // The rail seeds from /alerts/recent because /alerts?since=0 is an
+    // ascending capped page — a viewer starting there opened on history.
+    stack = await startStack();
+    await stack.engine.trackWallet(ADDRESSES[0], 'Whale', false);
+
+    for (let i = 0; i < 6; i++) {
+      await deliver(stack.baseUrl, [
+        buyTx(ADDRESSES[0], `recent-${i}`, 'Mint111', 1, 1_000, 1_787_000_000 + i),
+      ]);
+    }
+
+    const recent = await fetch(`${stack.baseUrl}/alerts/recent?limit=3`, { headers: authHeaders() });
+    const rows = (await recent.json()) as { id: number }[];
+    const head = await fetch(`${stack.baseUrl}/alerts/head`, { headers: authHeaders() });
+    const { id: headId } = (await head.json()) as { id: number };
+
+    expect(rows).toHaveLength(3);
+    expect(rows[0].id).toBe(headId);
+    expect(rows[0].id).toBeGreaterThan(rows[2].id);
+  });
+
+  it('offers the same wallet list to autocomplete that the app shows', async () => {
+    stack = await startStack();
+    await stack.engine.trackWallet(ADDRESSES[0], 'Bonk Whale', false);
+    await stack.engine.trackWallet(ADDRESSES[1], 'Mine', true);
+
+    const wallets = await stack.engine.listWallets();
+    const choices = walletChoices(wallets, 'bonk');
+
+    // Case-insensitive, and the value is the address the command resolves.
+    expect(choices).toHaveLength(1);
+    expect(choices[0].value).toBe(ADDRESSES[0]);
+    // Your own wallet leads an unfiltered list.
+    expect(walletChoices(wallets, '')[0].value).toBe(ADDRESSES[1]);
+  });
+
+  it('lists tracked wallets in an embed the way /wallets does', async () => {
+    stack = await startStack();
+    await stack.engine.trackWallet(ADDRESSES[0], 'Whale', false);
+
+    const embed = buildWalletsEmbed(await stack.engine.listWallets()).toJSON();
+    expect(embed.description).toContain('Whale');
+    expect(embed.footer!.text).toContain('1 wallet');
+  });
+
+  it('renders the PnL heatmap image from real recorded trades', async () => {
+    stack = await startStack();
+    const wallet = await stack.engine.trackWallet(ADDRESSES[0], 'Whale', false);
+
+    // A buy then a sell on the same day, so the day has realized PnL.
+    await deliver(stack.baseUrl, [
+      buyTx(ADDRESSES[0], 'heat-buy', 'Mint111', 1, 1_000, 1_787_000_000),
+      sellTx(ADDRESSES[0], 'heat-sell', 'Mint111', 3, 1_000, 1_787_003_600),
+    ]);
+
+    const rows = await stack.engine.getPnl(wallet.id);
+    expect(rows.length).toBeGreaterThan(0);
+
+    const reply = buildPnlReply({ walletLabel: 'Whale', month: rows[0].date.slice(0, 7), rows });
+    expect(reply.files).toHaveLength(1);
+    const png = reply.files[0].attachment as Buffer;
+    expect([...png.subarray(0, 4)]).toEqual([0x89, 0x50, 0x4e, 0x47]);
+    expect(reply.embeds[0].toJSON().image?.url).toBe('attachment://pnl-heatmap.png');
+  });
 });

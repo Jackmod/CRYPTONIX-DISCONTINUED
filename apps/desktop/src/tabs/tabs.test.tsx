@@ -265,7 +265,42 @@ describe('CoinsTab', () => {
   it('shows a dash for a stat the provider did not return', async () => {
     render(<CoinsTab engine={fakeEngine({ listCoins: vi.fn(async () => [coin({ stats: null })]) })} />);
     await waitFor(() => expect(screen.getByText('PEPE')).toBeInTheDocument());
-    expect(within(screen.getByText('PEPE').closest('tr')!).getAllByText('—')).toHaveLength(2);
+    const row = within(screen.getByText('PEPE').closest('tr')!);
+    // Age and 5m volume; the change column falls back to 0.0% instead.
+    expect(row.getAllByText('—')).toHaveLength(2);
+  });
+
+  it('says how long ago it found each coin, which the age column does not', async () => {
+    // "Age" is the token's age WHEN FOUND — it never changes. How stale the
+    // signal is now is the number that decides whether to act on it.
+    const now = Date.now();
+    const rows = [
+      coin({ mint: 'A', symbol: 'FRESH', firstSeenAt: new Date(now - 30_000).toISOString() }),
+      coin({ mint: 'B', symbol: 'MINS', firstSeenAt: new Date(now - 12 * 60_000).toISOString() }),
+      coin({ mint: 'C', symbol: 'HOURS', firstSeenAt: new Date(now - 5 * 3_600_000).toISOString() }),
+      coin({ mint: 'D', symbol: 'DAYS', firstSeenAt: new Date(now - 3 * 86_400_000).toISOString() }),
+    ];
+    render(<CoinsTab engine={fakeEngine({ listCoins: vi.fn(async () => rows) })} />);
+    await waitFor(() => expect(screen.getByText('DAYS')).toBeInTheDocument());
+    expect(screen.getByText('just now')).toBeInTheDocument();
+    expect(screen.getByText('12m ago')).toBeInTheDocument();
+    expect(screen.getByText('5h ago')).toBeInTheDocument();
+    expect(screen.getByText('3d ago')).toBeInTheDocument();
+  });
+
+  it('shows a dash rather than NaN when the timestamp is unusable', async () => {
+    const rows = [coin({ firstSeenAt: 'not a date' })];
+    render(<CoinsTab engine={fakeEngine({ listCoins: vi.fn(async () => rows) })} />);
+    await waitFor(() => expect(screen.getByText('PEPE')).toBeInTheDocument());
+    expect(within(screen.getByText('PEPE').closest('tr')!).getByText('—')).toBeInTheDocument();
+  });
+
+  it('re-reads the list when the scanner publishes a new coin', async () => {
+    const engine = fakeEngine({ listCoins: vi.fn(async () => [coin()]) });
+    const { rerender } = render(<CoinsTab engine={engine} liveToken={1} />);
+    await waitFor(() => expect(engine.listCoins).toHaveBeenCalledTimes(1));
+    rerender(<CoinsTab engine={engine} liveToken={2} />);
+    await waitFor(() => expect(engine.listCoins).toHaveBeenCalledTimes(2));
   });
 
   it('links each coin to Axiom by mint', async () => {
