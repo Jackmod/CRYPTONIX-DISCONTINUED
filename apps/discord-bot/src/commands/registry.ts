@@ -3,10 +3,18 @@ import { trackCommand } from './track.js';
 import { untrackCommand } from './untrack.js';
 import { pnlCommand } from './pnl.js';
 import { walletsCommand } from './wallets.js';
+import { followingCommand } from './following.js';
 import { setupCommand } from './setup.js';
 import type { BotCommand } from './types.js';
 
-export const commands: BotCommand[] = [setupCommand, trackCommand, untrackCommand, walletsCommand, pnlCommand];
+export const commands: BotCommand[] = [
+  setupCommand,
+  trackCommand,
+  untrackCommand,
+  walletsCommand,
+  followingCommand,
+  pnlCommand,
+];
 
 export async function registerCommands(token: string, clientId: string, devGuildId?: string): Promise<void> {
   const rest = new REST().setToken(token);

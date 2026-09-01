@@ -15,3 +15,4 @@ export { buildNewCoinMessage, isNewCoinAlertPayload } from './embeds/new-coin.js
 export { buildWalletsEmbed } from './commands/wallets.js';
 export { walletChoices, displayLabel } from './commands/types.js';
 export { buildTweetMessage, isTweetAlertPayload } from './embeds/tweet.js';
+export { buildFollowingEmbed } from './commands/following.js';

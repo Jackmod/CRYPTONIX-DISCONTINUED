@@ -13,7 +13,7 @@ No trades are ever placed. Cryptonix produces links, never orders.
 | Package | What it is |
 |---|---|
 | `apps/engine` | The service. Helius webhooks in, trades and PnL in Postgres, REST + WebSocket out. Optional new-coin scanner. |
-| `apps/discord-bot` | discord.js process. Alerts as embeds, plus `/setup`, `/track`, `/untrack`, `/wallets`, `/pnl`. |
+| `apps/discord-bot` | discord.js process. Alerts as embeds, plus `/setup`, `/track`, `/untrack`, `/wallets`, `/following`, `/pnl`. |
 | `apps/desktop` | Tauri + React desktop app. Wallets, coins, tweet cards, PnL calendar, and a live feed. |
 | `packages/core` | Pure domain logic: Axiom links, swap parsing, FIFO PnL, the heatmap, coin momentum. No I/O. |
 | `packages/db` | Drizzle schema, migrations, and the Postgres client. |
@@ -108,7 +108,8 @@ Then, in any server the bot is in:
 /setup                                  → alerts go to the channel you ran it in
 /track wallet address:<solana address>  → follow a wallet, and backfill its history
 /track twitter handle:@someone          → follow an X account, and post its tweets here
-/wallets                                → list everything being tracked
+/wallets                                → list the wallets being tracked
+/following                              → list the X accounts being followed
 /pnl                                    → realized SOL, win rate, best/worst day, month heatmap
 /untrack wallet address:<address>       → stop following it, and release its Helius webhook
 /untrack twitter handle:@someone        → stop following an account
