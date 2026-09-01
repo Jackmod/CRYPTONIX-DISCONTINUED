@@ -1,4 +1,4 @@
-import { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder } from 'discord.js';
+import { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, escapeMarkdown } from 'discord.js';
 
 /** Field-for-field what apps/engine's TweetMonitor stores in alerts.payload. */
 export interface TweetAlertPayload {
@@ -50,6 +50,33 @@ function clamp(text: string, max: number): string {
 }
 
 /**
+ * Neutralises the markdown in a tweet before it is rendered in someone's
+ * server.
+ *
+ * Embed descriptions DO render masked links, and a tweet's text is written by
+ * a third party whose account can be compromised — which in crypto happens
+ * constantly. Left alone, `[Claim your airdrop](https://evil.example)` arrives
+ * in every configured channel as a clickable link with a friendly label and an
+ * arbitrary destination. That is a phishing vector this feature would be
+ * handing out, not a cosmetic problem.
+ *
+ * `maskedLink` is passed explicitly because discord.js leaves it OFF by
+ * default — the other options here are already on, and only this one is the
+ * dangerous omission.
+ *
+ * Escaping also happens to be the honest rendering: a tweet that literally
+ * said `**bold**` should show `**bold**`, not bold text.
+ */
+function escapeForDiscord(text: string): string {
+  return escapeMarkdown(text, {
+    maskedLink: true,
+    heading: true,
+    bulletedList: true,
+    numberedList: true,
+  });
+}
+
+/**
  * Discord rejects an image or author icon whose URL it cannot parse, and that
  * would cost the whole alert rather than the picture. Avatars and media come
  * from a third party, so both are checked.
@@ -72,7 +99,9 @@ function isUsableLink(link: string | null): link is string {
 export function buildTweetMessage(payload: TweetAlertPayload) {
   const embed = new EmbedBuilder()
     .setColor(PHOSPHOR)
-    .setDescription(clamp(payload.text, MAX_DESCRIPTION))
+    // Escaped BEFORE clamping, so the cut cannot land mid-escape and leave a
+    // trailing backslash that re-enables the next character.
+    .setDescription(clamp(escapeForDiscord(payload.text), MAX_DESCRIPTION))
     // Timestamped from the tweet, not from now: a replayed alert after an
     // outage must not claim an old tweet just happened.
     .setTimestamp(toDate(payload.postedAt));

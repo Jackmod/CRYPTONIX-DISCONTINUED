@@ -50,7 +50,7 @@ export interface E2EStack {
 export async function startStack(): Promise<E2EStack> {
   const db = createDb(TEST_DB_URL);
   await db.execute(
-    'TRUNCATE alerts, pnl_daily, wallet_trades, wallets, discord_guilds, client_state RESTART IDENTITY CASCADE'
+    'TRUNCATE alerts, pnl_daily, wallet_trades, wallets, discord_guilds, client_state, tweets, tracked_handles RESTART IDENTITY CASCADE'
   );
 
   const helius = {

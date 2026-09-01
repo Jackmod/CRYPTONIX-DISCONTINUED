@@ -3,6 +3,15 @@ import type { EngineClient, StoredTweet, TrackedHandle } from '../api/client';
 import { ExternalLink } from '../components/ExternalLink';
 import { Identicon } from '../components/Identicon';
 
+/**
+ * How often to re-read the followed list.
+ *
+ * `/track twitter` in Discord writes the same rows and publishes no alert, so
+ * nothing pushes that change — the same reason the wallet list is polled. Only
+ * while this tab is open, since that is the only time it is visible.
+ */
+const HANDLE_POLL_MS = 20_000;
+
 /** How long ago, in the shortest form that is still true. */
 function timeAgo(iso: string, now: number): string {
   const minutes = Math.floor((now - new Date(iso).getTime()) / 60_000);
@@ -107,6 +116,11 @@ export function CallsTab({ engine, liveToken = 0 }: { engine: EngineClient; live
     // liveToken: a tweet alert arrives on the same socket as everything else,
     // and a feed that never refreshes goes stale while it is open.
   }, [engine, reloadToken, liveToken]);
+
+  useEffect(() => {
+    const timer = setInterval(reload, HANDLE_POLL_MS);
+    return () => clearInterval(timer);
+  }, [reload]);
 
   const add = async (event: React.FormEvent) => {
     event.preventDefault();

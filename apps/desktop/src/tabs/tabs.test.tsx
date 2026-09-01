@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import type { Coin, DailyPnl, EngineClient, StoredTweet, Trade, Wallet } from '../api/client';
 import { EngineError } from '../api/client';
@@ -450,6 +450,24 @@ describe('CallsTab', () => {
     await waitFor(() => expect(engine.listTweets).toHaveBeenCalledTimes(1));
     rerender(<CallsTab engine={engine} liveToken={2} />);
     await waitFor(() => expect(engine.listTweets).toHaveBeenCalledTimes(2));
+  });
+
+  it('re-reads the followed list on a timer, so a Discord follow shows up', async () => {
+    // `/track twitter` writes the same rows and publishes no alert, so nothing
+    // pushes that change.
+    let rows: typeof handle[] = [];
+    const engine = fakeEngine({ listHandles: vi.fn(async () => rows) });
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+
+    render(<CallsTab engine={engine} />);
+    await waitFor(() => expect(screen.getByText('No accounts followed yet.')).toBeInTheDocument());
+
+    rows = [handle];
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(20_000);
+    });
+    await waitFor(() => expect(screen.getByText('@ansem')).toBeInTheDocument());
+    vi.useRealTimers();
   });
 
   it('surfaces why the engine refused a handle', async () => {

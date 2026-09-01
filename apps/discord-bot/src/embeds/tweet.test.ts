@@ -84,6 +84,32 @@ describe('buildTweetMessage', () => {
     expect(message.embeds[0].toJSON().description).toBe('sending it');
   });
 
+  it('defuses a masked link, which an embed description would otherwise render', () => {
+    // The real risk: a tracked account gets compromised and posts
+    // "[Claim your airdrop](https://evil.example)". Discord renders masked
+    // links in embed descriptions, so that arrives as a friendly-looking
+    // clickable link to an arbitrary site in every configured server.
+    const embed = buildTweetMessage({
+      ...payload,
+      text: '[Claim your airdrop](https://evil.example)',
+    }).embeds[0].toJSON();
+
+    expect(embed.description).toBe('\\[Claim your airdrop](https://evil.example)');
+    expect(embed.description).not.toMatch(/^\[Claim/);
+  });
+
+  it('shows what the tweet actually said, rather than styling it', () => {
+    const embed = buildTweetMessage({ ...payload, text: '**not bold** ||not hidden||' }).embeds[0].toJSON();
+    expect(embed.description).toBe('\\*\\*not bold\\*\\* \\|\\|not hidden\\|\\|');
+  });
+
+  it('escapes before clamping, so a cut cannot leave a dangling backslash', () => {
+    const embed = buildTweetMessage({ ...payload, text: '*'.repeat(5000) }).embeds[0].toJSON();
+    expect(embed.description!.length).toBeLessThanOrEqual(4096);
+    // A trailing lone backslash would escape the ellipsis and change meaning.
+    expect(embed.description!.endsWith('…')).toBe(true);
+  });
+
   it('clamps text Discord would reject for length', () => {
     const embed = buildTweetMessage({ ...payload, text: 'x'.repeat(5000) }).embeds[0].toJSON();
     expect(embed.description!.length).toBeLessThanOrEqual(4096);
