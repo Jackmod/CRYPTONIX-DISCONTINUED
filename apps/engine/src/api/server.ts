@@ -15,6 +15,13 @@ import { HeliusError } from '../helius/client.js';
 const MAX_LABEL_LENGTH = 100;
 /** Cap on a single catch-up page, so a long outage cannot flood a channel. */
 const MAX_ALERT_REPLAY = 50;
+/**
+ * Most alerts one /alerts/recent page will return.
+ *
+ * Matches the desktop rail's own cap: asking for more than it can hold would
+ * only waste a round trip.
+ */
+const MAX_RECENT_ALERTS = 200;
 const MAX_STATE_VALUE_LENGTH = 1_000;
 const MAX_COIN_PAGE = 200;
 /**
@@ -384,6 +391,45 @@ export function createServer(
         .where(eq(scannedCoins.alerted, true))
         .orderBy(desc(scannedCoins.momentumScore), desc(scannedCoins.firstSeenAt))
         .limit(limit);
+      res.json(rows);
+    })
+  );
+
+  /**
+   * The newest alerts, most recent first.
+   *
+   * A viewer wants a window on what just happened; GET /alerts answers a
+   * different question — "everything after this cursor" — and because that
+   * page is ascending and capped, a client starting at 0 got the fifty OLDEST
+   * alerts in the whole history. The desktop rail did exactly that and opened
+   * on ancient trades.
+   *
+   * Deliberately not a cursor: this endpoint is for clients that may miss an
+   * alert with no consequence. Anything that must deliver every alert exactly
+   * once uses /alerts and /alerts/head instead.
+   */
+  app.get(
+    '/alerts/recent',
+    asyncRoute(async (req, res) => {
+      const limitRaw = req.query.limit === undefined ? '50' : req.query.limit;
+      if (typeof limitRaw !== 'string') {
+        res.status(400).json({ error: 'limit must be a single integer' });
+        return;
+      }
+      const limit = Number(limitRaw);
+      if (!Number.isInteger(limit) || limit < 1) {
+        res.status(400).json({ error: 'limit must be a positive integer' });
+        return;
+      }
+
+      const rows = await db
+        .select()
+        .from(alerts)
+        // The same settle window as /alerts: a row whose lower-id sibling has
+        // not committed yet would otherwise appear, and disappear on a reload.
+        .where(sql`${alerts.ts} < now() - make_interval(secs => ${alertSettleMs / 1000})`)
+        .orderBy(desc(alerts.id))
+        .limit(Math.min(limit, MAX_RECENT_ALERTS));
       res.json(rows);
     })
   );

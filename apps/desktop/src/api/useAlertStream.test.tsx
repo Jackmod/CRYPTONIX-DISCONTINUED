@@ -38,16 +38,32 @@ class FakeSocket {
   }
 }
 
-function engineWith(alerts: AlertRecord[] | (() => Promise<AlertRecord[]>)): {
+function engineWith(
+  alerts: AlertRecord[] | (() => Promise<AlertRecord[]>),
+  recent?: AlertRecord[] | (() => Promise<AlertRecord[]>)
+): {
   engine: EngineClient;
   calls: number[];
+  recentCalls: number[];
 } {
   const calls: number[] = [];
+  const recentCalls: number[] = [];
   const listAlertsSince = vi.fn(async (since: number) => {
     calls.push(since);
     return typeof alerts === 'function' ? alerts() : alerts;
   });
-  return { engine: { listAlertsSince } as unknown as EngineClient, calls };
+  // With nothing seen yet the hook seeds from /alerts/recent, not from a
+  // cursor of 0 — so unless a test says otherwise, that answers the same rows.
+  const source = recent ?? alerts;
+  const listRecentAlerts = vi.fn(async (limit: number) => {
+    recentCalls.push(limit);
+    return typeof source === 'function' ? source() : source;
+  });
+  return {
+    engine: { listAlertsSince, listRecentAlerts } as unknown as EngineClient,
+    calls,
+    recentCalls,
+  };
 }
 
 function alert(id: number, label = 'whale'): AlertRecord {
@@ -160,6 +176,46 @@ describe('useAlertStream', () => {
     // The catch-up asks only for what came after the newest row it holds, so a
     // trade landing mid-reconnect is not lost and nothing is re-fetched twice.
     await waitFor(() => expect(calls.at(-1)).toBe(4));
+  });
+
+  it('seeds from the newest alerts, not from an ascending page starting at zero', async () => {
+    // Regression: `/alerts?since=0` is a capped ASCENDING page, so seeding
+    // with it opened the rail on the oldest alerts in the entire history.
+    const { engine, calls, recentCalls } = engineWith([], [alert(90), alert(91)]);
+    render(<Probe engine={engine} />);
+    await waitFor(() => expect(ids()).toBe('91,90'));
+    expect(recentCalls).toEqual([200]);
+    expect(calls).toEqual([]);
+  });
+
+  it('pages a long backlog instead of stopping after the first page', async () => {
+    // A full page means there may be more; stopping there left the rail on a
+    // stale window until the next reconnect.
+    let nextId = 100;
+    const page = async () => Array.from({ length: 50 }, () => alert(nextId++));
+    const { engine, calls } = engineWith(page, [alert(99)]);
+
+    render(<Probe engine={engine} />);
+    await waitFor(() => expect(ids()).toBe('99'));
+
+    const socket = FakeSocket.instances[0];
+    socket.open();
+
+    // Four pages of fifty is the rail's whole capacity; it stops there.
+    await waitFor(() => expect(calls).toHaveLength(4));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(100);
+    });
+    expect(calls).toHaveLength(4);
+  });
+
+  it('stops paging as soon as a short page arrives', async () => {
+    const { engine, calls } = engineWith([alert(200)], [alert(199)]);
+    render(<Probe engine={engine} />);
+    await waitFor(() => expect(ids()).toBe('199'));
+
+    FakeSocket.instances[0].open();
+    await waitFor(() => expect(calls).toEqual([199]));
   });
 
   it('backs off further on each failed attempt rather than hammering the engine', async () => {

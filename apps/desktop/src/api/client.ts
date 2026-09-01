@@ -125,6 +125,16 @@ export class EngineClient {
     return this.json(`/alerts?since=${encodeURIComponent(String(since))}`);
   }
 
+  /**
+   * The newest alerts, most recent first.
+   *
+   * `/alerts?since=0` cannot seed a viewer: it is an ascending capped page, so
+   * it answers with the OLDEST alerts in the whole history.
+   */
+  listRecentAlerts(limit = 100): Promise<AlertRecord[]> {
+    return this.json(`/alerts/recent?limit=${encodeURIComponent(String(limit))}`);
+  }
+
   async trackWallet(address: string, label: string, isMine: boolean): Promise<Wallet> {
     const res = await this.request('/wallets', {
       method: 'POST',

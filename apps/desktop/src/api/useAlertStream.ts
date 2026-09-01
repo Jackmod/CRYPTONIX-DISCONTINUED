@@ -4,6 +4,12 @@ import { mergeFeed, toFeedItem, type ConnectionState, type FeedItem } from './fe
 
 const INITIAL_BACKOFF_MS = 1_000;
 const MAX_BACKOFF_MS = 15_000;
+/** Must match the engine's MAX_ALERT_REPLAY. */
+const ENGINE_PAGE_SIZE = 50;
+/** The rail holds this many; fetching further back would only be discarded. */
+const FEED_CAP = 200;
+/** Bounds a walk after a long disconnect: 4 pages is the rail's whole capacity. */
+const MAX_CATCH_UP_PAGES = 4;
 
 /**
  * Subscribes to the engine's alert socket and keeps the live rail filled.
@@ -35,11 +41,35 @@ export function useAlertStream(engine: EngineClient, wsUrl: string, apiKey: stri
       setItems((current) => mergeFeed(current, incoming));
     };
 
-    /** Anything published while this client was not listening. */
+    const toItems = (rows: { id: number; type: string; payload: unknown; ts?: string }[]) =>
+      rows.map(toFeedItem).filter((item): item is FeedItem => item !== null);
+
+    /**
+     * Anything published while this client was not listening.
+     *
+     * Two different questions, deliberately asked with two different requests.
+     * With nothing seen yet there is no cursor to resume from and the rail
+     * wants the newest alerts; `/alerts?since=0` would answer with the OLDEST
+     * page in the whole history, which is what this used to do. Once a cursor
+     * exists, resuming from it is right — and it pages, because a long
+     * disconnect leaves more than one page behind and stopping after the first
+     * would strand the rail on a stale window.
+     */
     const catchUp = async () => {
       try {
-        const missed = await engine.listAlertsSince(highestId.current);
-        absorb(missed.map(toFeedItem).filter((item): item is FeedItem => item !== null));
+        if (highestId.current === 0) {
+          absorb(toItems(await engine.listRecentAlerts(FEED_CAP)));
+          return;
+        }
+
+        for (let page = 0; page < MAX_CATCH_UP_PAGES; page++) {
+          const missed = await engine.listAlertsSince(highestId.current);
+          if (missed.length === 0) return;
+          absorb(toItems(missed));
+          // A short page means the backlog is exhausted. A full one does not,
+          // so ask again from the new high-water mark.
+          if (missed.length < ENGINE_PAGE_SIZE) return;
+        }
       } catch {
         // The socket is the primary path; a failed catch-up is not worth
         // surfacing, and the next reconnect tries again.

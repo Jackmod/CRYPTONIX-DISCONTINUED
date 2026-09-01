@@ -720,6 +720,61 @@ describe('engine API', () => {
     expect((await api(app).get(`/alerts?since=${head.body.id}`)).body).toHaveLength(0);
   });
 
+  it('GET /alerts/recent returns the NEWEST alerts, newest first', async () => {
+    // Regression: the desktop rail seeded itself with `/alerts?since=0`, which
+    // is an ascending capped page — so it opened on the oldest alerts in the
+    // whole history rather than on what had just happened.
+    const app = buildApp();
+    await api(app).post('/wallets').send({ address: VALID_ADDRESS, label: 'W' });
+
+    for (const sig of ['r1', 'r2', 'r3', 'r4']) {
+      await request(app)
+        .post('/webhooks/helius')
+        .set('Authorization', WEBHOOK_SECRET)
+        .send([
+          {
+            signature: sig,
+            timestamp: 1_787_000_000,
+            type: 'SWAP',
+            tokenTransfers: [{ fromUserAccount: 'Pool', toUserAccount: VALID_ADDRESS, mint: 'M', tokenAmount: 1 }],
+            nativeTransfers: [{ fromUserAccount: VALID_ADDRESS, toUserAccount: 'Pool', amount: 1_000_000_000 }],
+          },
+        ]);
+    }
+
+    const recent = await api(app).get('/alerts/recent?limit=2');
+    const head = await api(app).get('/alerts/head');
+
+    expect(recent.body).toHaveLength(2);
+    expect(recent.body[0].id).toBe(head.body.id);
+    expect(recent.body[0].id).toBeGreaterThan(recent.body[1].id);
+  });
+
+  it('GET /alerts/recent defaults to a page rather than everything', async () => {
+    const app = buildApp();
+    expect((await api(app).get('/alerts/recent')).status).toBe(200);
+  });
+
+  it('GET /alerts/recent caps the limit a caller can ask for', async () => {
+    const app = buildApp();
+    // Larger than the cap is clamped, not refused: a viewer asking for more
+    // than the server will give is not an error.
+    expect((await api(app).get('/alerts/recent?limit=100000')).status).toBe(200);
+  });
+
+  it('GET /alerts/recent rejects a nonsense limit', async () => {
+    const app = buildApp();
+    for (const limit of ['abc', '0', '-1', '1.5', '']) {
+      const res = await api(app).get(`/alerts/recent?limit=${limit}`);
+      expect(res.status, `limit=${limit} must be rejected`).toBe(400);
+    }
+  });
+
+  it('GET /alerts/recent needs the api key like everything else', async () => {
+    const app = buildApp();
+    expect((await request(app).get('/alerts/recent')).status).toBe(401);
+  });
+
   it('untracking a wallet also removes its alerts', async () => {
     // alerts.ref_id has no foreign key, so nothing else would delete them and
     // the replay endpoint could push an untracked wallet's trades to Discord.
