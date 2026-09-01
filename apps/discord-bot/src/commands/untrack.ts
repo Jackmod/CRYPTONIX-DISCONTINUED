@@ -1,5 +1,5 @@
 import { InteractionContextType, PermissionFlagsBits, SlashCommandBuilder } from 'discord.js';
-import { describeError, shortAddress, type BotCommand } from './types.js';
+import { describeError, shortAddress, walletChoices, type BotCommand } from './types.js';
 
 export const untrackCommand: BotCommand = {
   data: new SlashCommandBuilder()
@@ -9,7 +9,13 @@ export const untrackCommand: BotCommand = {
       sub
         .setName('wallet')
         .setDescription('Stop tracking a Solana wallet address')
-        .addStringOption((opt) => opt.setName('address').setDescription('Solana wallet address').setRequired(true))
+        .addStringOption((opt) =>
+          opt
+            .setName('address')
+            .setDescription('Solana wallet address')
+            .setRequired(true)
+            .setAutocomplete(true)
+        )
     )
     // The wallet list is shared by every server the bot is in, and untracking
     // deletes that wallet's wallet_trades and pnl_daily rows outright. Live
@@ -20,6 +26,21 @@ export const untrackCommand: BotCommand = {
     // DM-enabled by default -- so without this the permission gate above was
     // bypassable by anyone who simply DMed the bot.
     .setContexts(InteractionContextType.Guild),
+
+  /**
+   * Suggestions must answer within Discord's 3-second window, and a failure
+   * has to answer with an empty list rather than throw — an autocomplete that
+   * never responds shows the user a stuck "loading" with no explanation.
+   */
+  async autocomplete(interaction, { engine }) {
+    try {
+      const wallets = await engine.listWallets();
+      await interaction.respond(walletChoices(wallets, interaction.options.getFocused()));
+    } catch (err) {
+      console.error('untrack autocomplete failed', err);
+      await interaction.respond([]).catch(() => {});
+    }
+  },
 
   async execute(interaction, { engine }) {
     await interaction.deferReply();

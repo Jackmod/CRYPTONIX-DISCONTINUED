@@ -22,6 +22,24 @@ const client = new Client({
 });
 
 client.on(Events.InteractionCreate, async (interaction) => {
+  if (interaction.isAutocomplete()) {
+    const command = commandsByName.get(interaction.commandName);
+    // Discord shows a stuck spinner if nothing answers, and the window is
+    // three seconds — so a missing handler is silently answered with nothing
+    // rather than left hanging.
+    if (!command?.autocomplete) {
+      await interaction.respond([]).catch(() => {});
+      return;
+    }
+    try {
+      await command.autocomplete(interaction, { engine, guildConfigs });
+    } catch (err) {
+      console.error(`autocomplete for ${interaction.commandName} failed`, err);
+      await interaction.respond([]).catch(() => {});
+    }
+    return;
+  }
+
   if (!interaction.isChatInputCommand()) return;
   const command = commandsByName.get(interaction.commandName);
   if (!command) return;

@@ -108,3 +108,32 @@ describe('buildNewCoinMessage', () => {
     expect(trades?.value).toContain('0% buys');
   });
 });
+
+describe('coin logo', () => {
+  it('shows the token real logo when the scanner found one', () => {
+    const embed = buildNewCoinMessage({ ...payload, imageUrl: 'https://cdn.example/logo.png' }).embeds[0].toJSON();
+    expect(embed.thumbnail?.url).toBe('https://cdn.example/logo.png');
+  });
+
+  it('omits the thumbnail when there is no logo', () => {
+    expect(buildNewCoinMessage({ ...payload, imageUrl: null }).embeds[0].toJSON().thumbnail).toBeUndefined();
+  });
+
+  it('drops a logo url Discord cannot parse rather than losing the alert', () => {
+    // setThumbnail throws on a malformed URL, and an alert that cannot render
+    // can never be delivered no matter how often it is retried.
+    const message = buildNewCoinMessage({ ...payload, imageUrl: 'javascript:alert(1)' });
+    expect(message.embeds[0].toJSON().thumbnail).toBeUndefined();
+    expect(message.embeds[0].toJSON().title).toContain('New coin');
+  });
+
+  it('accepts a payload from before the scanner carried a logo at all', () => {
+    // The fixture predates the field entirely.
+    expect('imageUrl' in payload).toBe(false);
+    expect(isNewCoinAlertPayload(payload)).toBe(true);
+  });
+
+  it('rejects a logo field that is neither a string nor null', () => {
+    expect(isNewCoinAlertPayload({ ...payload, imageUrl: 42 })).toBe(false);
+  });
+});

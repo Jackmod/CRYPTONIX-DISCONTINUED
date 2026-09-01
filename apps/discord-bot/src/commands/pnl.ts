@@ -1,6 +1,6 @@
 import { InteractionContextType, SlashCommandBuilder } from 'discord.js';
-import { buildPnlEmbed } from '../embeds/pnl.js';
-import { describeError, type BotCommand } from './types.js';
+import { buildPnlReply } from '../embeds/pnl.js';
+import { describeError, walletChoices, type BotCommand } from './types.js';
 
 const MONTH_PATTERN = /^(\d{4})-(\d{2})$/;
 
@@ -27,12 +27,24 @@ export const pnlCommand: BotCommand = {
   data: new SlashCommandBuilder()
     .setName('pnl')
     .setDescription('Show realized PnL for a wallet')
-    .addStringOption((opt) => opt.setName('wallet').setDescription('Wallet label or address'))
+    .addStringOption((opt) =>
+      opt.setName('wallet').setDescription('Wallet label or address').setAutocomplete(true)
+    )
     .addStringOption((opt) => opt.setName('month').setDescription('Month as YYYY-MM'))
     // Read-only, but it exposes the shared wallet list and its PnL. In a DM
     // there is no server whose membership could gate that, so keep it in
     // guilds where the server's own access controls apply.
     .setContexts(InteractionContextType.Guild),
+
+  async autocomplete(interaction, { engine }) {
+    try {
+      const wallets = await engine.listWallets();
+      await interaction.respond(walletChoices(wallets, interaction.options.getFocused()));
+    } catch (err) {
+      console.error('pnl autocomplete failed', err);
+      await interaction.respond([]).catch(() => {});
+    }
+  },
 
   async execute(interaction, { engine }) {
     await interaction.deferReply();
@@ -55,21 +67,27 @@ export const pnlCommand: BotCommand = {
 
     try {
       const wallets = await engine.listWallets();
-      const wallet = walletQuery
-        ? wallets.find((w) => w.label === walletQuery || w.address === walletQuery)
+      // Case-insensitive: a label is displayed capitalised however the person
+      // who tracked it typed it, and requiring an exact match meant a wallet
+      // shown as "Bonk Whale" could not be asked for as "bonk whale".
+      const needle = walletQuery?.trim().toLowerCase();
+      const wallet = needle
+        ? wallets.find((w) => w.label.toLowerCase() === needle || w.address.toLowerCase() === needle)
         : wallets.find((w) => w.isMine) ?? wallets[0];
 
       if (!wallet) {
         await interaction.editReply(
           walletQuery
-            ? `⚠️ No tracked wallet matches \`${walletQuery}\`.`
+            // Backticks in the query would break out of the code span it is
+            // shown in; nothing else here is user-controlled.
+            ? `⚠️ No tracked wallet matches \`${walletQuery.replaceAll('`', '')}\`.`
             : '⚠️ No wallets are tracked yet. Add one with `/track wallet`.'
         );
         return;
       }
 
       const rows = await engine.getPnl(wallet.id);
-      await interaction.editReply({ embeds: [buildPnlEmbed({ walletLabel: wallet.label, month, rows })] });
+      await interaction.editReply(buildPnlReply({ walletLabel: wallet.label, month, rows }));
     } catch (err) {
       await interaction.editReply(describeError(err));
     }

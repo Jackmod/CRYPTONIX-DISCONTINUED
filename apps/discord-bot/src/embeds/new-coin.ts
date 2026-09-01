@@ -12,6 +12,8 @@ export interface NewCoinAlertPayload {
   sells5m: number;
   liquidityUsd: number | null;
   fdvUsd: number | null;
+  /** The token's real on-chain logo, when the provider has one. */
+  imageUrl?: string | null;
   axiomLink: string;
 }
 
@@ -40,7 +42,10 @@ export function isNewCoinAlertPayload(value: unknown): value is NewCoinAlertPayl
     // than an explicitly null one) passed the guard, failed the `=== null`
     // test in the renderer, and printed "$NaN" into a live channel.
     isNumberOrNull(p.liquidityUsd) &&
-    isNumberOrNull(p.fdvUsd)
+    isNumberOrNull(p.fdvUsd) &&
+    // Optional: alerts published before the scanner carried a logo have no
+    // such field at all, and those must keep rendering.
+    (p.imageUrl === undefined || p.imageUrl === null || typeof p.imageUrl === 'string')
   );
 }
 
@@ -103,6 +108,13 @@ export function buildNewCoinMessage(payload: NewCoinAlertPayload) {
     )
     .setFooter({ text: 'Momentum is a heuristic, not advice. Always check the chart yourself.' })
     .setTimestamp(new Date());
+
+  // The token's real logo, the way the desktop app shows it. Guarded because
+  // a thumbnail URL Discord cannot parse throws and would cost the whole
+  // alert — and the URL comes from a third-party feed.
+  if (typeof payload.imageUrl === 'string' && isUsableLink(payload.imageUrl)) {
+    embed.setThumbnail(payload.imageUrl);
+  }
 
   if (!isUsableLink(payload.axiomLink)) {
     console.error(`new-coin alert for ${payload.mint} has an unusable Axiom link; posting without the button`);

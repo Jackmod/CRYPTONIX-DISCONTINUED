@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildPnlEmbed } from './pnl';
+import { buildPnlEmbed, buildPnlReply } from './pnl';
 
 const rows = [
   { date: '2026-08-01', realizedPnlSol: 6.1, tradeCount: 4 },
@@ -91,5 +91,50 @@ describe('buildPnlEmbed', () => {
 
     const winRate = data.fields?.find((f) => f.name.includes('Win rate'));
     expect(winRate?.value).toBe('—');
+  });
+});
+
+describe('buildPnlReply', () => {
+  const options = { walletLabel: 'whale', month: '2026-08', rows };
+
+  it('attaches the rendered heatmap and points the embed at it', () => {
+    const reply = buildPnlReply(options);
+    expect(reply.files).toHaveLength(1);
+    expect(reply.files[0].name).toBe('pnl-heatmap.png');
+    expect(reply.embeds[0].toJSON().image?.url).toBe('attachment://pnl-heatmap.png');
+  });
+
+  it('attaches a real PNG, not an empty buffer', () => {
+    const attachment = buildPnlReply(options).files[0];
+    const png = attachment.attachment as Buffer;
+    expect([...png.subarray(0, 4)]).toEqual([0x89, 0x50, 0x4e, 0x47]);
+    expect(png.length).toBeGreaterThan(200);
+  });
+
+  it('keeps the text heatmap in the description as the fallback', () => {
+    // It survives a failed attachment, copies as text, and reads aloud.
+    expect(buildPnlReply(options).embeds[0].toJSON().description).toContain('⬜');
+  });
+
+  it('answers with an explanation when the month cannot be laid out at all', () => {
+    // buildHeatmapGrid refuses a year under 100, and the embed builds the grid
+    // too — so the whole reply must degrade rather than throw past the command.
+    const reply = buildPnlReply({ ...options, month: '0026-08' });
+    expect(reply.files).toEqual([]);
+    expect(reply.embeds).toHaveLength(1);
+    expect(reply.embeds[0].toJSON().description).toContain('not a month');
+    expect(reply.embeds[0].toJSON().image).toBeUndefined();
+  });
+
+  it('clamps a title Discord would reject for a very long wallet label', () => {
+    const reply = buildPnlReply({ ...options, walletLabel: 'x'.repeat(400) });
+    expect(reply.embeds[0].toJSON().title!.length).toBeLessThanOrEqual(256);
+  });
+
+  it('renders only the requested month into the picture', () => {
+    const withOther = [...rows, { date: '2026-07-15', realizedPnlSol: 999, tradeCount: 9 }];
+    const a = buildPnlReply({ ...options, rows: withOther }).files[0].attachment as Buffer;
+    const b = buildPnlReply(options).files[0].attachment as Buffer;
+    expect(a.equals(b)).toBe(true);
   });
 });

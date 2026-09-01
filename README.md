@@ -13,7 +13,7 @@ No trades are ever placed. Cryptonix produces links, never orders.
 | Package | What it is |
 |---|---|
 | `apps/engine` | The service. Helius webhooks in, trades and PnL in Postgres, REST + WebSocket out. Optional new-coin scanner. |
-| `apps/discord-bot` | discord.js process. Alerts as embeds, plus `/setup`, `/track`, `/untrack`, `/pnl`. |
+| `apps/discord-bot` | discord.js process. Alerts as embeds, plus `/setup`, `/track`, `/untrack`, `/wallets`, `/pnl`. |
 | `apps/desktop` | Tauri + React desktop app. Wallets, coins, PnL calendar, and a live feed. |
 | `packages/core` | Pure domain logic: Axiom links, swap parsing, FIFO PnL, the heatmap, coin momentum. No I/O. |
 | `packages/db` | Drizzle schema, migrations, and the Postgres client. |
@@ -105,9 +105,16 @@ Then, in any server the bot is in:
 ```
 /setup                                  → alerts go to the channel you ran it in
 /track wallet address:<solana address>  → follow a wallet, and backfill its history
+/wallets                                → list everything being tracked
 /pnl                                    → realized SOL, win rate, best/worst day, month heatmap
 /untrack wallet address:<address>       → stop following it, and release its Helius webhook
 ```
+
+`/pnl` and `/untrack` autocomplete the wallet, so nobody has to retype a
+44-character address. `/pnl` attaches a rendered calendar heatmap; the Unicode
+version stays in the embed as the fallback that copies as text and reads aloud.
+The image is drawn by a small PNG encoder in the bot — no native image library
+to install or break on a Node upgrade.
 
 `/setup`, `/track` and `/untrack` require **Manage Server**. The wallet list is
 shared by every server the bot is in, so untracking affects all of them.

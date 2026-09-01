@@ -1,4 +1,4 @@
-import type { ChatInputCommandInteraction } from 'discord.js';
+import type { AutocompleteInteraction, ChatInputCommandInteraction } from 'discord.js';
 import type { EngineClient } from '../engine/client.js';
 import type { GuildConfigCache } from '../guilds/config-cache.js';
 
@@ -10,6 +10,50 @@ export interface CommandDeps {
 export interface BotCommand {
   data: { name: string; toJSON(): unknown };
   execute(interaction: ChatInputCommandInteraction, deps: CommandDeps): Promise<void>;
+  /** Optional: fills in an option's suggestions as the user types. */
+  autocomplete?(interaction: AutocompleteInteraction, deps: CommandDeps): Promise<void>;
+}
+
+/** Discord shows at most 25 suggestions, and truncates neither for you. */
+export const MAX_CHOICES = 25;
+const MAX_CHOICE_NAME = 100;
+
+export interface WalletChoice {
+  name: string;
+  value: string;
+}
+
+/**
+ * Tracked wallets as autocomplete choices, filtered by what has been typed.
+ *
+ * Addresses are 44 characters of base58 that nobody retypes correctly, so
+ * `/untrack wallet` was effectively a copy-and-paste-only command. The value
+ * is always the address, which is what both commands resolve against.
+ */
+export function walletChoices(
+  wallets: { label: string; address: string; isMine: boolean }[],
+  query: string
+): WalletChoice[] {
+  const needle = query.trim().toLowerCase();
+  const matches = wallets.filter(
+    (w) => needle === '' || w.label.toLowerCase().includes(needle) || w.address.toLowerCase().includes(needle)
+  );
+
+  // Your own wallets first, the same order the app uses.
+  matches.sort((a, b) => {
+    if (a.isMine !== b.isMine) return a.isMine ? -1 : 1;
+    return a.label.localeCompare(b.label);
+  });
+
+  return matches.slice(0, MAX_CHOICES).map((w) => ({
+    name: clampChoiceName(`${w.label}${w.isMine ? ' (yours)' : ''} — ${shortAddress(w.address)}`),
+    value: w.address,
+  }));
+}
+
+/** Discord rejects the whole response if any choice name is over 100 chars. */
+function clampChoiceName(name: string): string {
+  return name.length <= MAX_CHOICE_NAME ? name : `${name.slice(0, MAX_CHOICE_NAME - 1)}…`;
 }
 
 /** Every command reports failure the same way: ephemeral, and never silent. */
