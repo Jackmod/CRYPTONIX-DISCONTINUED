@@ -71,7 +71,10 @@ export const env = {
    * defaults live in @cryptonix/core's DEFAULT_MOMENTUM_THRESHOLDS.
    */
   coinScannerEnabled: process.env.COIN_SCANNER_ENABLED === 'true',
-  coinScannerIntervalMs: Number(process.env.COIN_SCANNER_INTERVAL_MS ?? 60_000),
+  // numberOr, not a raw Number(): an empty value gave 0 and '60s' gave NaN,
+  // and setInterval clamps both to 1ms -- which would hammer DexScreener at
+  // roughly a thousand requests a second. Floored for the same reason.
+  coinScannerIntervalMs: Math.max(10_000, numberOr('COIN_SCANNER_INTERVAL_MS') ?? 60_000),
   coinThresholds: {
     maxAgeMinutes: numberOr('COIN_MAX_AGE_MINUTES'),
     minVolume5m: numberOr('COIN_MIN_VOLUME_5M'),

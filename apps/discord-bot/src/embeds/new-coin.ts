@@ -35,8 +35,17 @@ export function isNewCoinAlertPayload(value: unknown): value is NewCoinAlertPayl
     typeof p.priceChange5m === 'number' &&
     typeof p.buys5m === 'number' &&
     typeof p.sells5m === 'number' &&
-    typeof p.axiomLink === 'string'
+    typeof p.axiomLink === 'string' &&
+    // The nullable fields need checking too. An ABSENT liquidityUsd (rather
+    // than an explicitly null one) passed the guard, failed the `=== null`
+    // test in the renderer, and printed "$NaN" into a live channel.
+    isNumberOrNull(p.liquidityUsd) &&
+    isNumberOrNull(p.fdvUsd)
   );
+}
+
+function isNumberOrNull(value: unknown): boolean {
+  return value === null || (typeof value === 'number' && Number.isFinite(value));
 }
 
 /** Discord rejects an embed title over 256 characters by throwing. */

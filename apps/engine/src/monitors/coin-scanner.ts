@@ -1,4 +1,4 @@
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import type { Db } from '@cryptonix/db';
 import { scannedCoins, alerts } from '@cryptonix/db';
 import {
@@ -96,8 +96,11 @@ export class CoinScanner {
       return false;
     }
 
-    await this.publish(snapshot, result.score);
+    // Recorded BEFORE the alert goes out: publishing first meant a failed
+    // upsert, or a restart in between, left an alert delivered with no dedupe
+    // row, and the next poll alerted the same coin again.
     await this.remember(snapshot, { alerted: true, score: result.score });
+    await this.publish(snapshot, result.score);
     return true;
   }
 
@@ -107,10 +110,16 @@ export class CoinScanner {
       .values({ mint: snapshot.mint, symbol: snapshot.symbol, alerted, momentumScore: score })
       .onConflictDoUpdate({
         target: scannedCoins.mint,
-        // `alerted` only ever moves false -> true, never back: re-alerting a
-        // coin because a later poll scored it differently is exactly the noise
-        // this table exists to prevent.
-        set: { alerted, momentumScore: score, lastCheckedAt: new Date(), symbol: snapshot.symbol },
+        set: {
+          // Sticky: `alerted` only ever moves false -> true. Writing this
+          // pass's value could flip an already-alerted coin back to false --
+          // and then re-alert it -- which is exactly the noise this table
+          // exists to prevent.
+          alerted: sql`${scannedCoins.alerted} OR excluded.alerted`,
+          momentumScore: score,
+          lastCheckedAt: new Date(),
+          symbol: snapshot.symbol,
+        },
       });
   }
 

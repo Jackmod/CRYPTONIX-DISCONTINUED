@@ -149,3 +149,55 @@ describe('retries', () => {
     expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('getSnapshot: the requested mint must be the base token', () => {
+  const pair = (baseAddress: string, symbol: string, liquidityUsd: number) => ({
+    chainId: 'solana',
+    pairCreatedAt: Date.now() - 60_000,
+    baseToken: { address: baseAddress, symbol },
+    liquidity: { usd: liquidityUsd },
+    volume: { m5: 1000, h1: 1000 },
+    priceChange: { m5: 5 },
+    txns: { m5: { buys: 10, sells: 5 } },
+    fdv: 1000,
+  });
+
+  it('ignores a more liquid pair where the requested mint is not the base', async () => {
+    // The endpoint returns pairs where the token is base OR quote. Taking the
+    // most liquid regardless named the WRONG coin in the alert and filed the
+    // dedupe row under a mint the next poll never looks up -- so the same
+    // alert republished every minute, forever. Every earlier test used
+    // matching mints, so none of them could catch it.
+    const fetchImpl = vi.fn(async () =>
+      jsonResponse({
+        pairs: [
+          pair('SomeOtherToken', 'OTHER', 900_000), // far more liquid, wrong base
+          pair('Wanted', 'WANTED', 1_000),
+        ],
+      })
+    );
+
+    const snapshot = await client(fetchImpl).getSnapshot('Wanted');
+
+    expect(snapshot!.mint).toBe('Wanted');
+    expect(snapshot!.symbol).toBe('WANTED');
+  });
+
+  it('returns null when the mint only ever appears as a quote token', async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse({ pairs: [pair('SomeOtherToken', 'OTHER', 900_000)] }));
+
+    expect(await client(fetchImpl).getSnapshot('Wanted')).toBeNull();
+  });
+
+  it('still picks the most liquid pair among those with the right base', async () => {
+    const fetchImpl = vi.fn(async () =>
+      jsonResponse({
+        pairs: [pair('Wanted', 'thin', 1_000), pair('Wanted', 'deep', 90_000), pair('Other', 'x', 999_999)],
+      })
+    );
+
+    const snapshot = await client(fetchImpl).getSnapshot('Wanted');
+
+    expect(snapshot!.symbol).toBe('deep');
+  });
+});

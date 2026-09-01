@@ -196,3 +196,49 @@ describe('CoinScanner', () => {
     expect(await lenient.poll()).toBe(1);
   });
 });
+
+describe('CoinScanner: dedupe is durable', () => {
+  beforeEach(async () => {
+    await db.execute('TRUNCATE scanned_coins, alerts RESTART IDENTITY CASCADE');
+  });
+
+  it('never lets a later poll flip an alerted coin back to un-alerted', async () => {
+    // The upsert wrote whatever `alerted` the pass computed, so a coin that
+    // was alerted and then scored badly went back to false -- and could be
+    // alerted all over again.
+    const snapshots: Record<string, CoinSnapshot> = { Mint1: strongSnapshot() };
+    const { scanner, published } = buildScanner(snapshots);
+
+    await scanner.poll();
+    expect(published).toHaveLength(1);
+
+    snapshots.Mint1 = strongSnapshot({ volume5m: 1 }); // now fails the gates
+    await scanner.poll();
+    await scanner.poll();
+
+    const [row] = await db.select().from(scannedCoins);
+    expect(row.alerted).toBe(true); // sticky
+    expect(published).toHaveLength(1);
+  });
+
+  it('records the coin before the alert goes out', async () => {
+    // Publishing first left an alert delivered with no dedupe row if the
+    // upsert failed or the process restarted in between, and the next poll
+    // alerted the same coin again.
+    const alertBus = new AlertBus();
+    const seenWhenPublished: boolean[] = [];
+    alertBus.on('alert', async () => {
+      const rows = await db.select().from(scannedCoins);
+      seenWhenPublished.push(rows.length > 0 && rows[0].alerted === true);
+    });
+    const dex = {
+      listRecentSolanaMints: vi.fn(async () => ['Mint1']),
+      getSnapshot: vi.fn(async () => strongSnapshot()),
+    };
+
+    await new CoinScanner(db, dex, alertBus).poll();
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(seenWhenPublished).toEqual([true]);
+  });
+});

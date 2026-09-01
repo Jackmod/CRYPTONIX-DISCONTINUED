@@ -75,6 +75,9 @@ export class DexScreenerClient {
 
       const retryable = res.status === 429 || res.status >= 500;
       if (!retryable || attempt >= MAX_RETRIES) {
+        // Release the socket before throwing, exactly as the retry path below
+        // does; an unread body holds its undici connection until GC.
+        await res.body?.cancel().catch(() => {});
         throw new DexScreenerError(`DexScreener ${path} failed: ${res.status}`, res.status);
       }
 
@@ -105,7 +108,15 @@ export class DexScreenerClient {
    */
   async getSnapshot(mint: string): Promise<CoinSnapshot | null> {
     const body = (await this.get(`/latest/dex/tokens/${encodeURIComponent(mint)}`)) as { pairs?: DexPair[] };
-    const pairs = (body?.pairs ?? []).filter((p) => p.chainId === 'solana');
+
+    // The endpoint returns pairs where the token is base OR quote. Only the
+    // base ones describe THIS coin: taking the most liquid pair regardless
+    // could return a pair whose base is something else entirely, which named
+    // the wrong coin in the alert and filed the dedupe row under a mint the
+    // next poll never looks up -- so the same alert republished every minute.
+    const pairs = (body?.pairs ?? []).filter(
+      (p) => p.chainId === 'solana' && p.baseToken?.address === mint
+    );
     if (pairs.length === 0) return null;
 
     // Most liquid first, so a token listed on several DEXes is judged on the

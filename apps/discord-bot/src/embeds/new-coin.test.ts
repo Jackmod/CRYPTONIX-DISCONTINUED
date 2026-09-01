@@ -20,6 +20,20 @@ describe('isNewCoinAlertPayload', () => {
     expect(isNewCoinAlertPayload(payload)).toBe(true);
   });
 
+  it('rejects a payload whose nullable fields are missing rather than null', () => {
+    // Absent is not the same as null: it slipped past the guard, failed the
+    // `=== null` test in the renderer, and printed "$NaN" into a live channel.
+    const { liquidityUsd, ...withoutLiquidity } = payload;
+    expect(isNewCoinAlertPayload(withoutLiquidity)).toBe(false);
+
+    const { fdvUsd, ...withoutFdv } = payload;
+    expect(isNewCoinAlertPayload(withoutFdv)).toBe(false);
+
+    expect(isNewCoinAlertPayload({ ...payload, liquidityUsd: Number.NaN })).toBe(false);
+    // Explicit null is fine, and normal on the newest pairs.
+    expect(isNewCoinAlertPayload({ ...payload, liquidityUsd: null, fdvUsd: null })).toBe(true);
+  });
+
   it('rejects a wallet-trade payload sharing the same socket', () => {
     expect(isNewCoinAlertPayload({ walletLabel: 'Whale', mint: 'M', side: 'buy' })).toBe(false);
     expect(isNewCoinAlertPayload(null)).toBe(false);

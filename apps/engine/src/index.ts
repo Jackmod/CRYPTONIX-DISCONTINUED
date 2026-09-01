@@ -49,13 +49,26 @@ async function main() {
     console.log(`coin scanner enabled, polling every ${Math.round(env.coinScannerIntervalMs / 1000)}s`);
     console.log(`  thresholds: ${JSON.stringify(thresholds)}`);
 
+    // A sweep is rate limited and can retry, so it may outlast the interval.
+    // Without this guard two polls overlap, both read the same coin as
+    // un-alerted, and both publish -- the duplicate scanned_coins exists to
+    // prevent.
+    let scanInProgress = false;
     const runScan = () => {
+      if (scanInProgress) {
+        console.warn('coin scanner: previous poll still running, skipping this tick');
+        return;
+      }
+      scanInProgress = true;
       scanner
         .poll()
         .then((published) => {
           if (published > 0) console.log(`coin scanner: alerted ${published} new coin(s)`);
         })
-        .catch((err) => console.error('coin scanner poll failed', err));
+        .catch((err) => console.error('coin scanner poll failed', err))
+        .finally(() => {
+          scanInProgress = false;
+        });
     };
     runScan();
     const scanTimer = setInterval(runScan, env.coinScannerIntervalMs);
