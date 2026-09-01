@@ -64,3 +64,26 @@ describe('parseSwap', () => {
     expect(result).toBeNull();
   });
 });
+
+describe('token-to-token swaps', () => {
+  it('records the incoming token at a zero SOL basis, which is a known limitation', () => {
+    // Pinned so a change here is a deliberate one. See the note on parseSwap:
+    // the honest fix needs live Helius data, because a SOL buy routed through
+    // wrapped SOL can look identical and must not be dropped.
+    const swap = parseSwap(
+      {
+        signature: 'tok2tok',
+        timestamp: 1_787_000_000,
+        type: 'SWAP',
+        tokenTransfers: [
+          { fromUserAccount: 'Pool', toUserAccount: WALLET, mint: 'BONK', tokenAmount: 500 },
+          { fromUserAccount: WALLET, toUserAccount: 'Pool', mint: 'USDC', tokenAmount: 10 },
+        ],
+        nativeTransfers: [],
+      },
+      WALLET
+    );
+
+    expect(swap).toMatchObject({ side: 'buy', mint: 'BONK', tokenAmount: 500, solAmount: 0 });
+  });
+});

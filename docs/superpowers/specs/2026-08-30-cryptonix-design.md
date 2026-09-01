@@ -252,4 +252,15 @@ Discord bot.
   assuming an exact number.
 - Momentum-scoring thresholds for the coin scanner will need real-world
   tuning after launch — v1 ships with a reasonable starting formula, not
-  a promise of optimality.
+  a promise of optimality. Measured against live DexScreener on
+  2026-09-01: the shipped defaults passed 0 of 18 sampled coins, with
+  `minVolume5m` and `minBuyRatio` the binding gates. See the Phase 3
+  spike for the numbers; every threshold is overridable from `.env`.
+- Token-to-token swaps are recorded with a zero SOL cost basis, so
+  selling such a position later overstates realized PnL. The side is
+  decided by the token direction and the amount by the native SOL moving
+  with it, and a token→token swap moves no lamports. Refusing to record a
+  zero-SOL buy is not a safe fix blind: a real SOL purchase routed through
+  wrapped SOL can look the same, and dropping those would silently lose
+  genuine trades. Needs live Helius delivery data to separate the two.
+  Nearly every memecoin swap is SOL-paired, so the exposure is small.
