@@ -11,7 +11,16 @@ export interface AlertReplayOptions {
   pageSize: number;
   /** Ids remembered for de-duplication. */
   maxRememberedIds?: number;
-  /** Delivery attempts before an alert is given up on. Defaults to 3. */
+  /**
+   * Delivery attempts before an alert is given up on. Defaults to 20.
+   *
+   * Retries only happen on a walk, and walks are driven by reconnects and a
+   * 60s sweep — so a low limit is measured in minutes of Discord being down,
+   * not in attempts. At 3 a ten-minute Discord incident burned the budget and
+   * the cursor then stepped past every alert in that window, unrecoverably.
+   * 20 covers roughly twenty minutes while still bounding an alert that is
+   * genuinely undeliverable.
+   */
   maxAttempts?: number;
   /**
    * Reads the cursor persisted by a previous run, or null on a first run.
@@ -109,7 +118,7 @@ export class AlertReplay {
 
   constructor(private options: AlertReplayOptions) {
     this.maxRememberedIds = options.maxRememberedIds ?? 1_000;
-    this.maxAttempts = options.maxAttempts ?? 3;
+    this.maxAttempts = options.maxAttempts ?? 20;
   }
 
   /** Where the next catch-up resumes from. */

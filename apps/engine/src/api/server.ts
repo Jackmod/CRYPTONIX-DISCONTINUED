@@ -1,6 +1,6 @@
 import express, { type Express, type NextFunction, type Request, type Response } from 'express';
 import { timingSafeEqual } from 'node:crypto';
-import { desc, eq, gt } from 'drizzle-orm';
+import { and, desc, eq, gt, lt } from 'drizzle-orm';
 import type { Db } from '@cryptonix/db';
 import { wallets, walletTrades, pnlDaily, discordGuilds, alerts, clientState } from '@cryptonix/db';
 import type { HeliusEnhancedTransaction } from '@cryptonix/core';
@@ -16,6 +16,12 @@ const MAX_LABEL_LENGTH = 100;
 /** Cap on a single catch-up page, so a long outage cannot flood a channel. */
 const MAX_ALERT_REPLAY = 50;
 const MAX_STATE_VALUE_LENGTH = 1_000;
+/**
+ * How long an alert must have existed before the replay endpoint will serve
+ * it. Covers the window where a higher serial id is visible while a lower one
+ * is still uncommitted. The live socket is unaffected.
+ */
+const ALERT_SETTLE_MS = 5_000;
 
 /**
  * Express 4 does not forward a rejected promise from an async handler to its
@@ -133,7 +139,9 @@ export function createServer(
   _alertBus: AlertBus,
   solanaRpc: Pick<SolanaRpcClient, 'getBalanceSol'>,
   webhookSecret: string,
-  apiKey: string
+  apiKey: string,
+  /** Injectable so tests need not wait out the window; see ALERT_SETTLE_MS. */
+  alertSettleMs: number = ALERT_SETTLE_MS
 ): Express {
   // An empty key would be catastrophic rather than merely permissive: two
   // zero-length buffers compare equal, so `Authorization: Bearer ` with no
@@ -313,10 +321,17 @@ export function createServer(
         return;
       }
 
+      // Only rows old enough that any lower id has certainly committed.
+      //
+      // Postgres allocates a serial before the transaction commits, so alert
+      // 101 can be visible while 100 is still in flight. A client walking in
+      // that window advances its cursor to 101, and 100 -- which it also never
+      // saw live -- becomes unreachable, since the filter is strictly `> since`.
+      const settledBefore = new Date(Date.now() - alertSettleMs);
       const rows = await db
         .select()
         .from(alerts)
-        .where(gt(alerts.id, since))
+        .where(and(gt(alerts.id, since), lt(alerts.ts, settledBefore)))
         .orderBy(alerts.id)
         .limit(MAX_ALERT_REPLAY);
       res.json(rows);
@@ -456,6 +471,11 @@ export function createServer(
     // Done BEFORE responding 200: if a recompute throws, we still want Helius
     // to retry the batch (consistent with the batch-failure handling above),
     // rather than reporting success while PnL is left stale.
+    // Every wallet is attempted before anything is thrown. Throwing from
+    // inside the loop meant a batch touching A and B, where A failed, never
+    // reached B -- and on the redelivery B had no new trades and was not in
+    // the retry set either, so its pnl_daily stayed permanently stale.
+    let recomputeError: unknown = null;
     for (const walletId of affected) {
       const hadNewTrade = withNewTrades.includes(walletId);
       if (!hadNewTrade && !walletsNeedingRecompute.has(walletId)) continue;
@@ -468,9 +488,14 @@ export function createServer(
         // instead of short-circuiting on "no new trades" and answering 200
         // with pnl_daily left stale.
         walletsNeedingRecompute.add(walletId);
-        throw err;
+        console.error(`pnl recompute failed for wallet ${walletId}`, err);
+        recomputeError ??= err;
       }
     }
+
+    // Rethrown after every wallet has been attempted, so asyncRoute answers
+    // 500 and Helius redelivers — the retry the set above depends on.
+    if (recomputeError !== null) throw recomputeError;
 
     res.status(200).send();
   }));

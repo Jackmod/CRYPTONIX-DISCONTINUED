@@ -13,6 +13,7 @@ const WEBHOOK_SECRET = 'test-webhook-secret';
 const API_KEY = 'test-engine-api-key';
 /** A genuine mainnet pubkey: POST /wallets now rejects anything that is not one. */
 const VALID_ADDRESS = 'So11111111111111111111111111111111111111112';
+const SECOND_ADDRESS = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
 
 /**
  * Every engine route except /webhooks/helius now requires the engine API key.
@@ -37,7 +38,7 @@ describe('engine API', () => {
   });
 
   /** Like buildApp, but exposes the mocks so a test can assert on Helius calls. */
-  function buildAppWithMocks() {
+  function buildAppWithMocks({ alertSettleMs = 0 }: { alertSettleMs?: number } = {}) {
     const helius = {
       createWalletWebhook: vi.fn().mockResolvedValue('wh_1'),
       getTransactionHistory: vi.fn().mockResolvedValue([]),
@@ -48,7 +49,7 @@ describe('engine API', () => {
     const pnlTracker = new PnlTracker(db, helius);
     const solanaRpc = { getBalanceSol: vi.fn().mockResolvedValue(4.2) };
     return {
-      app: createServer(db, walletMonitor, pnlTracker, alertBus, solanaRpc, WEBHOOK_SECRET, API_KEY),
+      app: createServer(db, walletMonitor, pnlTracker, alertBus, solanaRpc, WEBHOOK_SECRET, API_KEY, alertSettleMs),
       helius,
       pnlTracker,
       db,
@@ -65,7 +66,7 @@ describe('engine API', () => {
     const walletMonitor = new WalletMonitor(db, helius, alertBus);
     const pnlTracker = new PnlTracker(db, helius);
     const solanaRpc = { getBalanceSol: vi.fn().mockResolvedValue(4.2) };
-    return createServer(db, walletMonitor, pnlTracker, alertBus, solanaRpc, WEBHOOK_SECRET, API_KEY);
+    return createServer(db, walletMonitor, pnlTracker, alertBus, solanaRpc, WEBHOOK_SECRET, API_KEY, 0);
   }
 
   it('POST /wallets creates a wallet and GET /wallets lists it', async () => {
@@ -200,7 +201,7 @@ describe('engine API', () => {
     const walletMonitor = new WalletMonitor(failingDb, helius, alertBus);
     const pnlTracker = new PnlTracker(db, helius);
     const solanaRpc = { getBalanceSol: vi.fn() };
-    const app = createServer(db, walletMonitor, pnlTracker, alertBus, solanaRpc, WEBHOOK_SECRET, API_KEY);
+    const app = createServer(db, walletMonitor, pnlTracker, alertBus, solanaRpc, WEBHOOK_SECRET, API_KEY, 0);
 
     const res = await api(app)
       .post('/webhooks/helius')
@@ -267,7 +268,8 @@ describe('engine API', () => {
       alertBus,
       solanaRpc,
       WEBHOOK_SECRET,
-      API_KEY
+      API_KEY,
+      0
     );
 
     const res = await api(app).post('/wallets').send({ address: VALID_ADDRESS, label: 'Test' });
@@ -871,5 +873,67 @@ describe('engine API', () => {
     const wallets = await api(app).get('/wallets');
     const trades = await api(app).get(`/wallets/${wallets.body[0].id}/trades`);
     expect(trades.body).toHaveLength(1);
+  });
+
+  it('retries every wallet in a batch, not just the first that failed', async () => {
+    // Throwing from inside the loop meant a batch touching A and B, where A
+    // failed, never reached B -- and on the redelivery B had no new trades and
+    // was not in the retry set either, so its pnl_daily stayed stale for good.
+    const { app, pnlTracker } = buildAppWithMocks();
+    const a = await api(app).post('/wallets').send({ address: VALID_ADDRESS, label: 'A' });
+    const b = await api(app).post('/wallets').send({ address: SECOND_ADDRESS, label: 'B' });
+
+    const swap = (address: string, signature: string) => ({
+      signature,
+      timestamp: 1_787_000_000,
+      type: 'SWAP',
+      tokenTransfers: [{ fromUserAccount: 'Pool', toUserAccount: address, mint: 'M', tokenAmount: 100 }],
+      nativeTransfers: [{ fromUserAccount: address, toUserAccount: 'Pool', amount: 1_000_000_000 }],
+    });
+    const batch = [swap(VALID_ADDRESS, 'batch-a'), swap(SECOND_ADDRESS, 'batch-b')];
+
+    // Wallet A's recompute fails on the first delivery.
+    const spy = vi
+      .spyOn(pnlTracker, 'recomputePnl')
+      .mockImplementationOnce(async () => {
+        throw new Error('transient failure for A');
+      });
+
+    const first = await request(app).post('/webhooks/helius').set('Authorization', WEBHOOK_SECRET).send(batch);
+    expect(first.status).toBe(500);
+
+    // B must still have been attempted in that same pass.
+    expect(spy.mock.calls.map((c) => c[0])).toContain(b.body.id);
+    spy.mockRestore();
+
+    // And the redelivery retries A even though it carries no new trades.
+    const second = await request(app).post('/webhooks/helius').set('Authorization', WEBHOOK_SECRET).send(batch);
+    expect(second.status).toBe(200);
+    expect((await api(app).get(`/wallets/${a.body.id}/pnl`)).body.length).toBeGreaterThan(0);
+  });
+
+  it('GET /alerts withholds an alert until it has settled', async () => {
+    // Postgres allocates a serial before commit, so a higher id can be visible
+    // while a lower one is still in flight; a client walking in that window
+    // would advance past the lower id and never see it.
+    const { app: settling } = buildAppWithMocks({ alertSettleMs: 60_000 });
+    await api(settling).post('/wallets').send({ address: VALID_ADDRESS, label: 'W' });
+    await request(settling)
+      .post('/webhooks/helius')
+      .set('Authorization', WEBHOOK_SECRET)
+      .send([
+        {
+          signature: 'settle-sig',
+          timestamp: 1_787_000_000,
+          type: 'SWAP',
+          tokenTransfers: [{ fromUserAccount: 'Pool', toUserAccount: VALID_ADDRESS, mint: 'M', tokenAmount: 1 }],
+          nativeTransfers: [{ fromUserAccount: VALID_ADDRESS, toUserAccount: 'Pool', amount: 1_000_000_000 }],
+        },
+      ]);
+
+    // Just written, so still inside the settle window.
+    expect((await api(settling).get('/alerts?since=0')).body).toHaveLength(0);
+    // The head is unaffected: it is about resuming, not about replaying.
+    expect((await api(settling).get('/alerts/head')).body.id).toBeGreaterThan(0);
   });
 });

@@ -64,7 +64,7 @@ export async function startStack(): Promise<E2EStack> {
   const pnlTracker = new PnlTracker(db, helius as never);
   const solanaRpc = { getBalanceSol: vi.fn(async () => 1.5) };
 
-  const app = createEngineApp(db, walletMonitor, pnlTracker, alertBus, solanaRpc, WEBHOOK_SECRET, API_KEY);
+  const app = createEngineApp(db, walletMonitor, pnlTracker, alertBus, solanaRpc, WEBHOOK_SECRET, API_KEY, 0);
 
   const server: Server = await new Promise((resolve) => {
     const s = app.listen(0, () => resolve(s));

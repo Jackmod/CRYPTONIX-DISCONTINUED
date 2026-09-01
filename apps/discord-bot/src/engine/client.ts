@@ -39,6 +39,14 @@ export class EngineError extends Error {
   }
 }
 
+/**
+ * A hung engine — not refused, just silent — otherwise blocks on undici's
+ * 300s header timeout per attempt, so the retry loops in loadUntilSuccessful
+ * and AlertReplay.start sit in ClientReady with no alert subscription and
+ * nothing in the log. Fail fast so those loops can actually loop.
+ */
+const REQUEST_TIMEOUT_MS = 10_000;
+
 export class EngineClient {
   constructor(private baseUrl: string, private apiKey: string) {}
 
@@ -60,6 +68,7 @@ export class EngineClient {
       // Every engine route except /webhooks/helius requires this key.
       res = await fetch(`${this.baseUrl}${path}`, {
         ...init,
+        signal: init?.signal ?? AbortSignal.timeout(REQUEST_TIMEOUT_MS),
         headers: { ...(init?.headers ?? {}), Authorization: `Bearer ${this.apiKey}` },
       });
     } catch (err) {
