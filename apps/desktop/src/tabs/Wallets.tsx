@@ -1,7 +1,73 @@
-import { useEffect, useState } from 'react';
-import type { EngineClient, Trade, Wallet } from '../api/client';
+import { useEffect, useMemo, useState } from 'react';
+import { summarizePnl } from '@cryptonix/core';
+import type { DailyPnl, EngineClient, Trade, Wallet } from '../api/client';
 import { Identicon } from '../components/Identicon';
 import { Sol, shortAddress } from '../components/Money';
+
+/**
+ * All-time PnL for one wallet, alongside its trades (spec §5.3).
+ *
+ * Its own request, so a PnL failure leaves the trade table standing: the two
+ * answer different questions and one is not worth losing for the other.
+ */
+function WalletPnl({ engine, walletId, liveToken }: { engine: EngineClient; walletId: number; liveToken: number }) {
+  const [rows, setRows] = useState<DailyPnl[] | null>(null);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    engine
+      .listPnl(walletId)
+      .then((r) => {
+        if (cancelled) return;
+        setRows(r);
+        setFailed(false);
+      })
+      .catch(() => !cancelled && setFailed(true));
+    return () => {
+      cancelled = true;
+    };
+  }, [engine, walletId, liveToken]);
+
+  const summary = useMemo(() => summarizePnl(rows ?? []), [rows]);
+
+  if (failed) return <div className="banner">PnL is unavailable for this wallet right now.</div>;
+  if (rows === null) return null;
+
+  return (
+    <div className="stat-row">
+      <div>
+        <div className="stat-label">Realized</div>
+        <div className="stat-value">
+          <Sol value={summary.realizedSol} /> <span style={{ fontSize: 12, color: 'var(--dim)' }}>SOL</span>
+        </div>
+      </div>
+      <div>
+        <div className="stat-label">Win rate</div>
+        {/* null means no trading days at all, which is not the same as 0%. */}
+        <div className="stat-value">
+          {summary.winRate === null ? '—' : `${Math.round(summary.winRate * 100)}%`}
+        </div>
+      </div>
+      <div>
+        <div className="stat-label">Trading days</div>
+        <div className="stat-value">{summary.tradingDays}</div>
+      </div>
+      <div>
+        <div className="stat-label">Best day</div>
+        <div className="stat-value">
+          {summary.best ? <Sol value={summary.best.realizedPnlSol} decimals={2} /> : '—'}
+        </div>
+      </div>
+      <div>
+        <div className="stat-label">Worst day</div>
+        <div className="stat-value">
+          {summary.worst ? <Sol value={summary.worst.realizedPnlSol} decimals={2} /> : '—'}
+        </div>
+      </div>
+    </div>
+  );
+}
 
 /**
  * Own wallets first, then the rest alphabetically.
@@ -95,6 +161,8 @@ function TradeHistory({
 
       {error && <div className="banner">{error}</div>}
 
+      <WalletPnl engine={engine} walletId={wallet.id} liveToken={liveToken} />
+
       {trades === null && !error ? (
         <div className="empty">Loading trades…</div>
       ) : trades && trades.length === 0 ? (
@@ -169,11 +237,16 @@ export function WalletsTab({
 
       {error && <div className="banner">{error}</div>}
 
-      {wallets.length === 0 && !error ? (
-        <div className="empty">
-          <div className="empty-title">No wallets tracked yet.</div>
-          Add one in <code>Settings</code>, or run <code>/track wallet</code> from Discord — both write to the same list.
-        </div>
+      {wallets.length === 0 ? (
+        // On a failed load the banner above says what happened; a bare table
+        // header with nothing under it adds nothing and reads as "empty".
+        !error && (
+          <div className="empty">
+            <div className="empty-title">No wallets tracked yet.</div>
+            Add one in <code>Settings</code>, or run <code>/track wallet</code> from Discord — both write to the same
+            list.
+          </div>
+        )
       ) : (
         <div className="table-wrap">
           <table className="table">

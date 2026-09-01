@@ -55,7 +55,11 @@ function compactUsd(value: number): string {
  * "undefined" is worse than no row at all.
  */
 export function toFeedItem(alert: { id: number; type: string; payload: unknown; ts?: string }): FeedItem | null {
-  const at = alert.ts ? new Date(alert.ts) : new Date();
+  // An unparseable timestamp must not reach the renderer: `Invalid Date`
+  // throws from toISOString(), which would take the whole rail down over one
+  // bad row.
+  const parsed = alert.ts ? new Date(alert.ts) : new Date();
+  const at = Number.isNaN(parsed.getTime()) ? new Date() : parsed;
   if (!isRecord(alert.payload)) return null;
 
   if (alert.type === 'wallet_buy' || alert.type === 'wallet_sell') {

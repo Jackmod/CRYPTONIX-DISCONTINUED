@@ -93,6 +93,8 @@ describe('WalletsTab', () => {
     render(<WalletsTab engine={fakeEngine()} wallets={[]} error="cannot reach the engine" />);
     expect(screen.getByText('cannot reach the engine')).toBeInTheDocument();
     expect(screen.queryByText('No wallets tracked yet.')).not.toBeInTheDocument();
+    // Not a bare header with no rows under it either.
+    expect(screen.queryByRole('table')).not.toBeInTheDocument();
   });
 
   it('marks your own wallet and shows a live balance', async () => {
@@ -111,6 +113,34 @@ describe('WalletsTab', () => {
     render(<WalletsTab engine={engine} wallets={[wallet()]} error={null} />);
     await waitFor(() => expect(screen.getByText('—')).toBeInTheDocument());
     expect(screen.getByText('whale')).toBeInTheDocument();
+  });
+
+  it('shows that wallet all-time PnL alongside its trades', async () => {
+    const engine = fakeEngine({
+      listTrades: vi.fn(async () => [trade()]),
+      listPnl: vi.fn(async () => [
+        { date: '2026-08-01', realizedPnlSol: 4, tradeCount: 2 },
+        { date: '2026-08-02', realizedPnlSol: -1, tradeCount: 1 },
+      ]),
+    });
+    render(<WalletsTab engine={engine} wallets={[wallet()]} error={null} />);
+    fireEvent.click(screen.getByText('whale'));
+    await waitFor(() => expect(screen.getByText('+3.0000')).toBeInTheDocument());
+    expect(screen.getByText('50%')).toBeInTheDocument();
+    expect(engine.listPnl).toHaveBeenCalledWith(1);
+  });
+
+  it('keeps the trade table when PnL fails on its own', async () => {
+    const engine = fakeEngine({
+      listTrades: vi.fn(async () => [trade()]),
+      listPnl: vi.fn(async () => {
+        throw new EngineError('pnl unavailable', 500);
+      }),
+    });
+    render(<WalletsTab engine={engine} wallets={[wallet()]} error={null} />);
+    fireEvent.click(screen.getByText('whale'));
+    await waitFor(() => expect(screen.getByText('BUY')).toBeInTheDocument());
+    expect(screen.getByText('PnL is unavailable for this wallet right now.')).toBeInTheDocument();
   });
 
   it('opens that wallet history when a row is clicked', async () => {
@@ -303,6 +333,37 @@ describe('PnlTab', () => {
     expect(screen.queryByText('0%')).not.toBeInTheDocument();
   });
 
+  it('falls back to a real wallet when the selected one is untracked', async () => {
+    const a = wallet({ id: 1, label: 'aaa' });
+    const b = wallet({ id: 2, label: 'bbb' });
+    const engine = fakeEngine();
+    const { rerender } = render(<PnlTab engine={engine} wallets={[a, b]} />);
+    fireEvent.change(screen.getByLabelText('Wallet'), { target: { value: '2' } });
+    await waitFor(() => expect(engine.listPnl).toHaveBeenCalledWith(2));
+
+    // Wallet 2 goes away — untracked here, or from Discord.
+    rerender(<PnlTab engine={engine} wallets={[a]} />);
+    await waitFor(() => expect(engine.listPnl).toHaveBeenLastCalledWith(1));
+  });
+
+  it('clears a stale error once a later read succeeds', async () => {
+    let fail = true;
+    const engine = fakeEngine({
+      listPnl: vi.fn(async () => {
+        if (fail) throw new EngineError('pnl unavailable', 500);
+        return [];
+      }),
+    });
+    const a = wallet({ id: 1, label: 'aaa' });
+    const b = wallet({ id: 2, label: 'bbb' });
+    render(<PnlTab engine={engine} wallets={[a, b]} />);
+    await waitFor(() => expect(screen.getByText('pnl unavailable')).toBeInTheDocument());
+
+    fail = false;
+    fireEvent.change(screen.getByLabelText('Wallet'), { target: { value: '2' } });
+    await waitFor(() => expect(screen.queryByText('pnl unavailable')).not.toBeInTheDocument());
+  });
+
   it('walks back a month, and across a year boundary', async () => {
     render(<PnlTab engine={fakeEngine()} wallets={[wallet()]} />);
     for (let i = 0; i < 9; i++) fireEvent.click(screen.getByLabelText('Previous month'));
@@ -322,6 +383,14 @@ describe('PnlTab', () => {
     expect(level('2026-09-02')).toBe('gain-1');
     expect(level('2026-09-03')).toBe('loss-2');
     expect(level('2026-09-04')).toBe('loss-1');
+  });
+
+  it('reads out the full day, not just its number', async () => {
+    const engine = fakeEngine({ listPnl: vi.fn(async () => [pnl('2026-09-01', 2, 3)]) });
+    render(<PnlTab engine={engine} wallets={[wallet()]} />);
+    await waitFor(() =>
+      expect(screen.getByLabelText('2026-09-01: 2.0000 SOL, 3 trades')).toBeInTheDocument()
+    );
   });
 
   it('leaves a day with no trades unlevelled', async () => {

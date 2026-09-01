@@ -39,8 +39,11 @@ export function PnlTab({ engine, wallets }: { engine: EngineClient; wallets: Wal
   const [day, setDay] = useState<string | null>(null);
   const [dayTrades, setDayTrades] = useState<Trade[] | null>(null);
 
-  // Default to your own wallet: it is the one you check first.
-  const active = walletId ?? ordered[0]?.id ?? null;
+  // Default to your own wallet: it is the one you check first. A selection
+  // that no longer exists — untracked here or from Discord — falls back to
+  // that same default rather than asking the engine for a deleted wallet.
+  const selectionExists = ordered.some((w) => w.id === walletId);
+  const active = (selectionExists ? walletId : null) ?? ordered[0]?.id ?? null;
 
   useEffect(() => {
     if (active === null) return;
@@ -49,7 +52,11 @@ export function PnlTab({ engine, wallets }: { engine: EngineClient; wallets: Wal
     setDay(null);
     engine
       .listPnl(active)
-      .then((r) => !cancelled && setRows(r))
+      .then((r) => {
+        if (cancelled) return;
+        setRows(r);
+        setError(null);
+      })
       .catch((err) => !cancelled && setError((err as Error).message));
     return () => {
       cancelled = true;
@@ -165,18 +172,26 @@ export function PnlTab({ engine, wallets }: { engine: EngineClient; wallets: Wal
               <span key={i}>{d}</span>
             ))}
           </div>
-          <div className="cal" role="grid" aria-label={`Daily PnL for ${month}`}>
+          {/* A group, not a grid: role="grid" promises rows and gridcells that
+              this is not, and a wrong role reads worse than none. */}
+          <div className="cal" role="group" aria-label={`Daily PnL for ${month}`}>
             {grid.flat().map((cell, i) => {
               if (cell.date === null) return <div key={i} className="cal-cell" data-level="pad" aria-hidden="true" />;
               const row = byDate.get(cell.date);
               const level = levelFor(row?.realizedPnlSol ?? 0, (row?.tradeCount ?? 0) > 0, best, worst);
+              const summaryText = `${cell.date}: ${(row?.realizedPnlSol ?? 0).toFixed(4)} SOL, ${
+                row?.tradeCount ?? 0
+              } trades`;
               return (
                 <button
                   key={cell.date}
                   className="cal-cell"
                   data-level={level}
                   aria-pressed={day === cell.date}
-                  title={`${cell.date}: ${(row?.realizedPnlSol ?? 0).toFixed(4)} SOL, ${row?.tradeCount ?? 0} trades`}
+                  // The visible text is just the day number, so the full
+                  // reading has to be spelled out; `title` alone loses to it.
+                  aria-label={summaryText}
+                  title={summaryText}
                   onClick={() => setDay(day === cell.date ? null : cell.date)}
                 >
                   {/* The date, so a day is identifiable without hovering it. */}

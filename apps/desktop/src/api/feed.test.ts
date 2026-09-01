@@ -64,6 +64,14 @@ describe('toFeedItem', () => {
     expect(result!.link).toBeNull();
   });
 
+  it('falls back to now on an unparseable timestamp, rather than an Invalid Date', () => {
+    // Regression: Invalid Date throws from toISOString(), which the rail calls
+    // on every row — one bad row took the whole feed down.
+    const result = toFeedItem({ id: 1, type: 'new_coin', ts: 'not a date', payload: { symbol: 'S', mint: 'm' } });
+    expect(Number.isNaN(result!.at.getTime())).toBe(false);
+    expect(() => result!.at.toISOString()).not.toThrow();
+  });
+
   it('falls back to now when the alert carries no timestamp', () => {
     const before = Date.now();
     const result = toFeedItem({ id: 1, type: 'new_coin', payload: { symbol: 'S', mint: 'm' } });
