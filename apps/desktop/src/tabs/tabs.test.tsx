@@ -807,6 +807,37 @@ describe('SettingsTab', () => {
     await waitFor(() => expect(screen.getByText('wallet not found')).toBeInTheDocument());
   });
 
+  it('reports what the engine says it is doing', async () => {
+    const engine = fakeEngine({
+      getHealth: vi.fn(async () => ({ ok: true, features: { coinScanner: true, tweetMonitor: false } })),
+    });
+    renderSettings({ engine });
+
+    await waitFor(() => expect(screen.getByText('Connected.')).toBeInTheDocument());
+    const line = screen.getByText('Connected.').closest('p')!;
+    expect(line).toHaveTextContent('Coin scanner on');
+    expect(line).toHaveTextContent('tweet monitor off');
+  });
+
+  it.each([
+    [0, 'Not reachable.'],
+    [401, 'Not authorised.'],
+    [404, 'Engine is older than this app.'],
+    [500, 'Status unavailable.'],
+  ])('names the failure behind status %i, because the fixes differ', async (status, heading) => {
+    // A 404 especially is NOT unreachable: the engine answered, it just
+    // predates the route. Saying "unreachable" sends someone to check a URL
+    // and a key that are both fine.
+    const engine = fakeEngine({
+      getHealth: vi.fn(async () => {
+        throw new EngineError('boom', status);
+      }),
+    });
+    renderSettings({ engine });
+
+    await waitFor(() => expect(screen.getByText(heading)).toBeInTheDocument());
+  });
+
   it('labels every engine field visibly, since they arrive pre-filled', () => {
     renderSettings();
     for (const name of ['HTTP URL', 'WebSocket URL', 'API key']) {

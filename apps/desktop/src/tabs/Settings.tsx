@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import type { EngineClient, Wallet } from '../api/client';
+import { useEffect, useState } from 'react';
+import { EngineError, type EngineClient, type EngineHealth, type Wallet } from '../api/client';
 import { Identicon } from '../components/Identicon';
 import { displayLabel, shortAddress } from '../components/Money';
 import { sortWallets } from './Wallets';
@@ -150,6 +150,73 @@ function WalletRow({
 }
 
 /**
+ * What the engine reports about itself.
+ *
+ * The place someone looks when a list is empty and they want to know whether
+ * that is the answer or the problem. A failed check is shown as unreachable
+ * rather than hidden, because "cannot ask" is itself the useful answer.
+ */
+function EngineStatus({ engine }: { engine: EngineClient }) {
+  const [health, setHealth] = useState<EngineHealth | null>(null);
+  const [problem, setProblem] = useState<{ heading: string; detail: string } | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setProblem(null);
+    setHealth(null);
+    engine
+      .getHealth()
+      .then((h) => !cancelled && setHealth(h))
+      .catch((err) => !cancelled && setProblem(describeProblem(err)));
+    return () => {
+      cancelled = true;
+    };
+  }, [engine]);
+
+  if (problem) {
+    return (
+      <p className="status-line" role="status">
+        <span className="loss">{problem.heading}</span> {problem.detail}
+      </p>
+    );
+  }
+  if (health === null) return null;
+
+  return (
+    <p className="status-line" role="status">
+      <span className="gain">Connected.</span> Coin scanner{' '}
+      <b>{health.features?.coinScanner ? 'on' : 'off'}</b>, tweet monitor{' '}
+      <b>{health.features?.tweetMonitor ? 'on' : 'off'}</b>.
+    </p>
+  );
+}
+
+/**
+ * Says which failure this is, because the fixes are different.
+ *
+ * A 404 in particular is NOT "unreachable" — the engine answered, it simply
+ * predates this route. Reporting that as unreachable sends someone to check a
+ * URL and a key that are both fine, when what they need is to update the
+ * engine.
+ */
+function describeProblem(err: unknown): { heading: string; detail: string } {
+  const status = err instanceof EngineError ? err.status : undefined;
+  if (status === 0) {
+    return { heading: 'Not reachable.', detail: 'Check the URL below, and that the engine is running.' };
+  }
+  if (status === 401) {
+    return { heading: 'Not authorised.', detail: 'The key below does not match the engine ENGINE_API_KEY.' };
+  }
+  if (status === 404) {
+    return {
+      heading: 'Engine is older than this app.',
+      detail: 'It has no /health route. Everything else still works; update the engine to see its status.',
+    };
+  }
+  return { heading: 'Status unavailable.', detail: (err as Error).message };
+}
+
+/**
  * Manage tracked wallets and where the app points (spec §5.3).
  *
  * Everything here writes through the engine, which is the single writer — so
@@ -288,9 +355,11 @@ export function SettingsTab({
         </div>
       )}
 
-      <h2 className="stat-label" style={{ marginBottom: 'var(--s3)' }}>
+      <h2 className="stat-label" style={{ marginBottom: 'var(--s2)' }}>
         Engine
       </h2>
+      {/* Keyed on the connection so saving a new one re-checks immediately. */}
+      <EngineStatus key={`${connection.httpUrl}|${connection.apiKey}`} engine={engine} />
       <form
         onSubmit={(e) => {
           e.preventDefault();

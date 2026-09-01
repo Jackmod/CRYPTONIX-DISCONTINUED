@@ -745,3 +745,14 @@ a.btn {
   height: 32px;
   border-radius: 50%;
 }
+
+/* A one-line report from the engine, above the connection fields. */
+.status-line {
+  margin: 0 0 var(--s3);
+  font-size: 11px;
+  color: var(--dim);
+}
+.status-line b {
+  color: var(--text-bright);
+  font-weight: 400;
+}
