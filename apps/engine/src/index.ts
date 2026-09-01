@@ -25,7 +25,19 @@ async function main() {
   const walletMonitor = new WalletMonitor(db, helius, alertBus);
   const pnlTracker = new PnlTracker(db, helius);
 
-  const app = createServer(db, walletMonitor, pnlTracker, alertBus, solanaRpc, env.webhookSecret, env.apiKey);
+  const app = createServer(
+    db,
+    walletMonitor,
+    pnlTracker,
+    alertBus,
+    solanaRpc,
+    env.webhookSecret,
+    env.apiKey,
+    undefined,
+    // Reported by GET /health, so the desktop app can explain an empty list
+    // truthfully instead of guessing at the configuration.
+    { coinScanner: env.coinScannerEnabled, tweetMonitor: env.twitterApiKey !== '' }
+  );
   const server = app.listen(env.port, () => {
     console.log(`cryptonix engine listening on :${env.port}`);
   });

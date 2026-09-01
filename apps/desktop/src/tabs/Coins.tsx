@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { Coin, EngineClient } from '../api/client';
+import type { Coin, EngineClient, EngineHealth } from '../api/client';
 import { CoinLogo } from '../components/CoinLogo';
 import { compactUsd, shortAddress } from '../components/Money';
 import { ExternalLink } from '../components/ExternalLink';
@@ -37,6 +37,7 @@ function displaySymbol(coin: { symbol: string; mint: string }): string {
 export function CoinsTab({ engine, liveToken = 0 }: { engine: EngineClient; liveToken?: number }) {
   const [coins, setCoins] = useState<Coin[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [health, setHealth] = useState<EngineHealth | null>(null);
 
   // Re-read when an alert lands: the scanner publishes a new coin over the
   // same socket, and a list that never refreshes goes stale while it is open.
@@ -50,6 +51,13 @@ export function CoinsTab({ engine, liveToken = 0 }: { engine: EngineClient; live
         setError(null);
       })
       .catch((err) => !cancelled && setError((err as Error).message));
+
+    // Separate, and allowed to fail: it only sharpens the wording of the empty
+    // state, and must not cost this tab its actual data.
+    engine
+      .getHealth()
+      .then((hp) => !cancelled && setHealth(hp))
+      .catch(() => !cancelled && setHealth(null));
     return () => {
       cancelled = true;
     };
@@ -71,9 +79,20 @@ export function CoinsTab({ engine, liveToken = 0 }: { engine: EngineClient; live
         <div className="empty">Loading coins…</div>
       ) : coins && coins.length === 0 ? (
         <div className="empty">
-          <div className="empty-title">The scanner has not flagged anything yet.</div>
-          It is off unless <code>COIN_SCANNER_ENABLED=true</code> is set for the engine. The gates are deliberately
-          strict, so a quiet hour is normal — <code>scripts/threshold-sweep.ts</code> shows what is passing right now.
+          {/* The engine knows whether the scanner is even running, so say which
+              of the two situations this is rather than guessing. */}
+          {health?.features?.coinScanner === false ? (
+            <>
+              <div className="empty-title">The scanner is off.</div>
+              Set <code>COIN_SCANNER_ENABLED=true</code> for the engine to start looking.
+            </>
+          ) : (
+            <>
+              <div className="empty-title">The scanner has not flagged anything yet.</div>
+              The gates are deliberately strict, so a quiet hour is normal —{' '}
+              <code>scripts/threshold-sweep.ts</code> shows what is passing right now.
+            </>
+          )}
         </div>
       ) : (
         <div className="table-wrap">

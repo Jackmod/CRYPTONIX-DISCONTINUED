@@ -59,7 +59,7 @@ describe('engine API', () => {
     };
   }
 
-  function buildApp() {
+  function buildApp(features?: { coinScanner: boolean; tweetMonitor: boolean }) {
     const helius = {
       createWalletWebhook: vi.fn().mockResolvedValue('wh_1'),
       getTransactionHistory: vi.fn().mockResolvedValue([]),
@@ -69,7 +69,7 @@ describe('engine API', () => {
     const walletMonitor = new WalletMonitor(db, helius, alertBus);
     const pnlTracker = new PnlTracker(db, helius);
     const solanaRpc = { getBalanceSol: vi.fn().mockResolvedValue(4.2) };
-    return createServer(db, walletMonitor, pnlTracker, alertBus, solanaRpc, WEBHOOK_SECRET, API_KEY, 0);
+    return createServer(db, walletMonitor, pnlTracker, alertBus, solanaRpc, WEBHOOK_SECRET, API_KEY, 0, features);
   }
 
   it('POST /wallets creates a wallet and GET /wallets lists it', async () => {
@@ -721,6 +721,27 @@ describe('engine API', () => {
     expect(head.body.id).toBe(Math.max(...all.body.map((a: { id: number }) => a.id)));
     // Resuming from the head yields nothing, which is the whole point.
     expect((await api(app).get(`/alerts?since=${head.body.id}`)).body).toHaveLength(0);
+  });
+
+  it('GET /health reports which optional monitors are running', async () => {
+    // The desktop app used to guess: the Calls tab said "set TWITTER_API_KEY"
+    // even when it was set and the provider was simply failing, which sends
+    // you to fix the wrong thing.
+    const off = buildApp();
+    expect((await api(off).get('/health')).body).toEqual({
+      ok: true,
+      features: { coinScanner: false, tweetMonitor: false },
+    });
+
+    const on = buildApp({ coinScanner: true, tweetMonitor: true });
+    expect((await api(on).get('/health')).body.features).toEqual({
+      coinScanner: true,
+      tweetMonitor: true,
+    });
+  });
+
+  it('GET /health needs the api key, since it reports configuration', async () => {
+    expect((await request(buildApp()).get('/health')).status).toBe(401);
   });
 
   it('POST /handles accepts what a person actually pastes', async () => {

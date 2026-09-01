@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import type { EngineClient, StoredTweet, TrackedHandle } from '../api/client';
+import type { EngineClient, EngineHealth, StoredTweet, TrackedHandle } from '../api/client';
 import { ExternalLink } from '../components/ExternalLink';
 import { Identicon } from '../components/Identicon';
 
@@ -93,6 +93,7 @@ function TweetCard({ tweet, now }: { tweet: StoredTweet; now: number }) {
 export function CallsTab({ engine, liveToken = 0 }: { engine: EngineClient; liveToken?: number }) {
   const [handles, setHandles] = useState<TrackedHandle[] | null>(null);
   const [tweets, setTweets] = useState<StoredTweet[] | null>(null);
+  const [health, setHealth] = useState<EngineHealth | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
@@ -110,6 +111,14 @@ export function CallsTab({ engine, liveToken = 0 }: { engine: EngineClient; live
         setError(null);
       })
       .catch((err) => !cancelled && setError((err as Error).message));
+
+    // Asked for separately, and allowed to fail. It only sharpens the wording
+    // of an empty state; an engine too old to have /health, or a proxy
+    // answering something unexpected, must not cost this tab its actual data.
+    engine
+      .getHealth()
+      .then((hp) => !cancelled && setHealth(hp))
+      .catch(() => !cancelled && setHealth(null));
     return () => {
       cancelled = true;
     };
@@ -199,12 +208,23 @@ export function CallsTab({ engine, liveToken = 0 }: { engine: EngineClient; live
       )}
 
       {tweets !== null && tweets.length === 0 && handles !== null && handles.length > 0 && (
+        /*
+         * Two different situations, and telling them apart matters: the engine
+         * knows whether it is even looking. Saying "set TWITTER_API_KEY" when
+         * it IS set sends the reader to fix the wrong thing.
+         */
         <div className="empty">
           <div className="empty-title">Nothing posted yet.</div>
-          Tweets appear here once the engine finds them. That needs{' '}
-          <code>TWITTER_API_KEY</code> set — finding out an account has posted is the one part of
-          Cryptonix with no free option, since X's free tier is write-only and Nitter was taken down
-          in August 2026. Rendering costs nothing, so everything else on this screen already works.
+          {health?.features?.tweetMonitor === false ? (
+            <>
+              The engine is not looking: <code>TWITTER_API_KEY</code> is unset. Finding out an account
+              has posted is the one part of Cryptonix with no free option — X's free tier is
+              write-only, and Nitter was taken down in August 2026. Rendering costs nothing, so
+              everything else on this screen already works.
+            </>
+          ) : (
+            <>Tweets appear here as the engine finds them.</>
+          )}
         </div>
       )}
 

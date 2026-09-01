@@ -62,6 +62,15 @@ export interface StoredTweet {
   postedAt: string;
 }
 
+/** What the engine reports it is actually doing. */
+export interface EngineHealth {
+  ok: boolean;
+  features: {
+    coinScanner: boolean;
+    tweetMonitor: boolean;
+  };
+}
+
 export interface AlertRecord {
   id: number;
   type: string;
@@ -136,6 +145,10 @@ export class EngineClient {
   async getBalance(walletId: number): Promise<number> {
     const body = await this.json<{ sol?: number }>(`/wallets/${walletId}/balance`);
     return typeof body.sol === 'number' ? body.sol : 0;
+  }
+
+  getHealth(): Promise<EngineHealth> {
+    return this.json('/health');
   }
 
   listHandles(): Promise<TrackedHandle[]> {

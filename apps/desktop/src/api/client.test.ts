@@ -94,6 +94,12 @@ describe('EngineClient', () => {
     );
   });
 
+  it('reads what the engine reports it is doing', async () => {
+    stub(json({ ok: true, features: { coinScanner: true, tweetMonitor: false } }));
+    const health = await new EngineClient('http://e', 'k').getHealth();
+    expect(health.features).toEqual({ coinScanner: true, tweetMonitor: false });
+  });
+
   it('handles the empty 204 body on untrack', async () => {
     stub(new Response(null, { status: 204 }));
     await expect(new EngineClient('http://e', 'k').untrackWallet(3)).resolves.toBeUndefined();

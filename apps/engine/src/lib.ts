@@ -5,7 +5,7 @@
  * connects to the real database and registers real Helius webhooks. This
  * barrel exposes the pieces an end-to-end test wires together itself.
  */
-export { createServer } from './api/server.js';
+export { createServer, type EngineFeatures } from './api/server.js';
 export { attachWebSocket } from './api/ws.js';
 export { AlertBus, type AlertEvent } from './api/alert-bus.js';
 export { WalletMonitor } from './monitors/wallet-monitor.js';

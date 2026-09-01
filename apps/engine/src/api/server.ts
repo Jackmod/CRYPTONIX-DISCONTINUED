@@ -32,6 +32,13 @@ const MAX_ALERT_REPLAY = 50;
  * only waste a round trip.
  */
 const MAX_RECENT_ALERTS = 200;
+
+export interface EngineFeatures {
+  /** COIN_SCANNER_ENABLED was set, so new coins are being looked for. */
+  coinScanner: boolean;
+  /** TWITTER_API_KEY was set, so tweets are being looked for. */
+  tweetMonitor: boolean;
+}
 /** The Calls tab is a feed, not an archive. */
 const MAX_RECENT_TWEETS = 200;
 const MAX_STATE_VALUE_LENGTH = 1_000;
@@ -161,7 +168,16 @@ export function createServer(
   webhookSecret: string,
   apiKey: string,
   /** Injectable so tests need not wait out the window; see ALERT_SETTLE_MS. */
-  alertSettleMs: number = ALERT_SETTLE_MS
+  alertSettleMs: number = ALERT_SETTLE_MS,
+  /**
+   * Which optional monitors this process actually started.
+   *
+   * Reported by GET /health so a client can say something TRUE about why a
+   * list is empty. The desktop app was guessing — the Calls tab told you to
+   * set TWITTER_API_KEY even when it was set and the provider was simply
+   * failing, which sends you to fix the wrong thing.
+   */
+  features: EngineFeatures = { coinScanner: false, tweetMonitor: false }
 ): Express {
   // An empty key would be catastrophic rather than merely permissive: two
   // zero-length buffers compare equal, so `Authorization: Bearer ` with no
@@ -467,6 +483,20 @@ export function createServer(
    * Shared exactly like the wallet list: `/track twitter` in Discord and the
    * app's Calls tab write the same rows, so neither has anything to sync.
    */
+  /**
+   * What this engine is actually doing.
+   *
+   * Deliberately behind the API key like everything else: it reports which
+   * monitors are running, which is configuration rather than public
+   * information.
+   */
+  app.get(
+    '/health',
+    asyncRoute(async (_req, res) => {
+      res.json({ ok: true, features });
+    })
+  );
+
   app.get(
     '/handles',
     asyncRoute(async (_req, res) => {

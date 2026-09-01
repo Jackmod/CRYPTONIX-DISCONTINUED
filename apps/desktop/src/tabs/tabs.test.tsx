@@ -61,6 +61,7 @@ function fakeEngine(over: Partial<Record<keyof EngineClient, unknown>> = {}): En
     trackHandle: vi.fn(async () => ({ id: 1, handle: 'ansem' })),
     untrackHandle: vi.fn(async () => undefined),
     listTweets: vi.fn(async () => []),
+    getHealth: vi.fn(async () => ({ ok: true, features: { coinScanner: true, tweetMonitor: true } })),
     listAlertsSince: vi.fn(async () => []),
     trackWallet: vi.fn(async () => wallet()),
     updateWallet: vi.fn(async () => wallet()),
@@ -236,10 +237,36 @@ describe('WalletsTab', () => {
 });
 
 describe('CoinsTab', () => {
-  it('says the scanner is off rather than implying nothing is trading', async () => {
-    render(<CoinsTab engine={fakeEngine()} />);
-    await waitFor(() => expect(screen.getByText('The scanner has not flagged anything yet.')).toBeInTheDocument());
+  it('says the scanner is off when the engine reports it is off', async () => {
+    const engine = fakeEngine({
+      getHealth: vi.fn(async () => ({ ok: true, features: { coinScanner: false, tweetMonitor: true } })),
+    });
+    render(<CoinsTab engine={engine} />);
+    await waitFor(() => expect(screen.getByText('The scanner is off.')).toBeInTheDocument());
     expect(screen.getByText('COIN_SCANNER_ENABLED=true')).toBeInTheDocument();
+  });
+
+  it('still lists coins when the health check fails outright', async () => {
+    // An engine too old to have /health, or a proxy answering oddly, must not
+    // cost this tab its actual data.
+    const engine = fakeEngine({
+      listCoins: vi.fn(async () => [coin()]),
+      getHealth: vi.fn(async () => {
+        throw new EngineError('not found', 404);
+      }),
+    });
+    render(<CoinsTab engine={engine} />);
+    await waitFor(() => expect(screen.getByText('PEPE')).toBeInTheDocument());
+  });
+
+  it('says the hour was quiet when the scanner IS running', async () => {
+    // Telling someone to set a variable they already set sends them to fix
+    // the wrong thing.
+    render(<CoinsTab engine={fakeEngine()} />);
+    await waitFor(() =>
+      expect(screen.getByText('The scanner has not flagged anything yet.')).toBeInTheDocument()
+    );
+    expect(screen.queryByText('COIN_SCANNER_ENABLED=true')).not.toBeInTheDocument();
   });
 
   it('renders a scored coin with its stats', async () => {
@@ -437,11 +464,33 @@ describe('CallsTab', () => {
     expect(container.querySelector('.tweet-media')).toBeNull();
   });
 
-  it('explains that only discovery needs a key, once a handle is followed', async () => {
-    const engine = fakeEngine({ listHandles: vi.fn(async () => [handle]) });
+  it('explains that only discovery needs a key, when the engine has none', async () => {
+    const engine = fakeEngine({
+      listHandles: vi.fn(async () => [handle]),
+      getHealth: vi.fn(async () => ({ ok: true, features: { coinScanner: true, tweetMonitor: false } })),
+    });
     render(<CallsTab engine={engine} />);
     await waitFor(() => expect(screen.getByText('Nothing posted yet.')).toBeInTheDocument());
     expect(screen.getByText('TWITTER_API_KEY')).toBeInTheDocument();
+  });
+
+  it('still renders tweets when the health check fails outright', async () => {
+    const engine = fakeEngine({
+      listHandles: vi.fn(async () => [handle]),
+      listTweets: vi.fn(async () => [tweet()]),
+      getHealth: vi.fn(async () => {
+        throw new EngineError('not found', 404);
+      }),
+    });
+    render(<CallsTab engine={engine} />);
+    await waitFor(() => expect(screen.getByText('sending it')).toBeInTheDocument());
+  });
+
+  it('does not blame a missing key when the engine already has one', async () => {
+    const engine = fakeEngine({ listHandles: vi.fn(async () => [handle]) });
+    render(<CallsTab engine={engine} />);
+    await waitFor(() => expect(screen.getByText('Nothing posted yet.')).toBeInTheDocument());
+    expect(screen.queryByText('TWITTER_API_KEY')).not.toBeInTheDocument();
   });
 
   it('re-reads when a tweet alert lands', async () => {
