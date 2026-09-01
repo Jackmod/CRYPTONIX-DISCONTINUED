@@ -80,6 +80,10 @@ export const scannedCoins = pgTable('scanned_coins', {
   symbol: text('symbol').notNull(),
   alerted: boolean('alerted').notNull().default(false),
   momentumScore: integer('momentum_score'),
+  /** The token's real logo (spec §5.3), or null when the provider has none. */
+  imageUrl: text('image_url'),
+  /** The snapshot the score was computed from, so the UI can show the numbers. */
+  stats: jsonb('stats'),
   firstSeenAt: timestamp('first_seen_at').notNull().defaultNow(),
   lastCheckedAt: timestamp('last_checked_at').notNull().defaultNow(),
 });

@@ -23,6 +23,8 @@ export interface NewCoinAlertPayload {
   sells5m: number;
   liquidityUsd: number | null;
   fdvUsd: number | null;
+  /** The token's real logo (spec §5.3), or null when there is none. */
+  imageUrl: string | null;
   axiomLink: string;
 }
 
@@ -107,7 +109,14 @@ export class CoinScanner {
   private async remember(snapshot: CoinSnapshot, { alerted, score }: { alerted: boolean; score: number }) {
     await this.db
       .insert(scannedCoins)
-      .values({ mint: snapshot.mint, symbol: snapshot.symbol, alerted, momentumScore: score })
+      .values({
+        mint: snapshot.mint,
+        symbol: snapshot.symbol,
+        alerted,
+        momentumScore: score,
+        imageUrl: snapshot.imageUrl,
+        stats: snapshot,
+      })
       .onConflictDoUpdate({
         target: scannedCoins.mint,
         set: {
@@ -119,6 +128,8 @@ export class CoinScanner {
           momentumScore: score,
           lastCheckedAt: new Date(),
           symbol: snapshot.symbol,
+          imageUrl: snapshot.imageUrl,
+          stats: snapshot,
         },
       });
   }
@@ -135,6 +146,7 @@ export class CoinScanner {
       sells5m: snapshot.sells5m,
       liquidityUsd: snapshot.liquidityUsd,
       fdvUsd: snapshot.fdvUsd,
+      imageUrl: snapshot.imageUrl,
       axiomLink: buildAxiomLink(snapshot.mint),
     };
 

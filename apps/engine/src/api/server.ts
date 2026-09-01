@@ -2,7 +2,7 @@ import express, { type Express, type NextFunction, type Request, type Response }
 import { timingSafeEqual } from 'node:crypto';
 import { and, desc, eq, gt, sql } from 'drizzle-orm';
 import type { Db } from '@cryptonix/db';
-import { wallets, walletTrades, pnlDaily, discordGuilds, alerts, clientState } from '@cryptonix/db';
+import { wallets, walletTrades, pnlDaily, discordGuilds, alerts, clientState, scannedCoins } from '@cryptonix/db';
 import type { HeliusEnhancedTransaction } from '@cryptonix/core';
 import type { WalletMonitor } from '../monitors/wallet-monitor.js';
 import type { PnlTracker } from '../monitors/pnl-tracker.js';
@@ -16,6 +16,7 @@ const MAX_LABEL_LENGTH = 100;
 /** Cap on a single catch-up page, so a long outage cannot flood a channel. */
 const MAX_ALERT_REPLAY = 50;
 const MAX_STATE_VALUE_LENGTH = 1_000;
+const MAX_COIN_PAGE = 200;
 /**
  * How long an alert must have existed before the replay endpoint will serve
  * it. Covers the window where a higher serial id is visible while a lower one
@@ -356,6 +357,37 @@ export function createServer(
    * replaying history. It cannot be derived from GET /alerts: that returns an
    * ascending, capped page, so asking with since=0 yields the OLDEST rows.
    */
+  /**
+   * Coins the scanner has alerted, strongest first.
+   *
+   * Feeds the desktop app's Coins tab (spec §5.3). Only alerted coins: the
+   * table also holds everything considered and rejected, which is scanner
+   * bookkeeping rather than something to show a user.
+   */
+  app.get(
+    '/coins',
+    asyncRoute(async (req, res) => {
+      const limitRaw = req.query.limit === undefined ? '50' : req.query.limit;
+      if (typeof limitRaw !== 'string') {
+        res.status(400).json({ error: 'limit must be a single integer' });
+        return;
+      }
+      const limit = Number(limitRaw);
+      if (!Number.isInteger(limit) || limit < 1 || limit > MAX_COIN_PAGE) {
+        res.status(400).json({ error: `limit must be an integer between 1 and ${MAX_COIN_PAGE}` });
+        return;
+      }
+
+      const rows = await db
+        .select()
+        .from(scannedCoins)
+        .where(eq(scannedCoins.alerted, true))
+        .orderBy(desc(scannedCoins.momentumScore), desc(scannedCoins.firstSeenAt))
+        .limit(limit);
+      res.json(rows);
+    })
+  );
+
   app.get(
     '/alerts/head',
     asyncRoute(async (_req, res) => {

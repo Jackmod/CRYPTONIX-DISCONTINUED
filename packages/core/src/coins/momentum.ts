@@ -25,6 +25,14 @@ export interface CoinSnapshot {
   buys5m: number;
   sells5m: number;
   fdvUsd: number | null;
+  /**
+   * The token's real logo, when the provider has one.
+   *
+   * Spec §5.3 requires every surface to show the actual image for what it is
+   * showing rather than a placeholder, so this is carried end to end: provider
+   * -> alert payload -> Discord embed and desktop UI.
+   */
+  imageUrl: string | null;
 }
 
 export interface MomentumThresholds {

@@ -30,6 +30,7 @@ interface DexPair {
   priceChange?: { m5?: number };
   txns?: { m5?: { buys?: number; sells?: number } };
   fdv?: number;
+  info?: { imageUrl?: string };
 }
 
 export interface DexScreenerConfig {
@@ -140,6 +141,10 @@ export class DexScreenerClient {
       buys5m: best.txns?.m5?.buys ?? 0,
       sells5m: best.txns?.m5?.sells ?? 0,
       fdvUsd: typeof best.fdv === 'number' ? best.fdv : null,
+      // Spec §5.3: real imagery, never a placeholder. Null when the provider
+      // has no logo yet, so the UI can show an identicon-style fallback
+      // rather than a broken image.
+      imageUrl: typeof best.info?.imageUrl === 'string' ? best.info.imageUrl : null,
     };
   }
 }

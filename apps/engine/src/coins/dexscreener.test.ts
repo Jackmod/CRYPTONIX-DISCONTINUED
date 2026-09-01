@@ -201,3 +201,39 @@ describe('getSnapshot: the requested mint must be the base token', () => {
     expect(snapshot!.symbol).toBe('deep');
   });
 });
+
+describe('getSnapshot: real imagery', () => {
+  it('carries the token logo through when the provider has one', async () => {
+    // Spec §5.3 requires the actual image for what is being shown, so the
+    // logo has to survive from provider to alert payload to UI.
+    const withImage = {
+      chainId: 'solana',
+      pairCreatedAt: Date.now() - 60_000,
+      baseToken: { address: 'Mint1', symbol: 'catcall' },
+      liquidity: { usd: 1000 },
+      volume: { m5: 1, h1: 1 },
+      priceChange: { m5: 1 },
+      txns: { m5: { buys: 1, sells: 1 } },
+      info: { imageUrl: 'https://cdn.dexscreener.com/cms/images/abc' },
+    };
+
+    const snapshot = await client(vi.fn(async () => jsonResponse({ pairs: [withImage] }))).getSnapshot('Mint1');
+
+    expect(snapshot!.imageUrl).toBe('https://cdn.dexscreener.com/cms/images/abc');
+  });
+
+  it('reports a missing logo as null so the UI can fall back deliberately', async () => {
+    const noImage = {
+      chainId: 'solana',
+      pairCreatedAt: Date.now() - 60_000,
+      baseToken: { address: 'Mint1', symbol: 'catcall' },
+      volume: { m5: 1, h1: 1 },
+      priceChange: { m5: 1 },
+      txns: { m5: { buys: 1, sells: 1 } },
+    };
+
+    const snapshot = await client(vi.fn(async () => jsonResponse({ pairs: [noImage] }))).getSnapshot('Mint1');
+
+    expect(snapshot!.imageUrl).toBeNull();
+  });
+});

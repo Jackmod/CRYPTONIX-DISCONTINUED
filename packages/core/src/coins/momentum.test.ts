@@ -23,6 +23,7 @@ function strongCoin(overrides: Partial<CoinSnapshot> = {}): CoinSnapshot {
     buys5m: 288,
     sells5m: 157,
     fdvUsd: 500_000,
+    imageUrl: 'https://cdn.dexscreener.com/cms/images/example',
     ...overrides,
   };
 }
