@@ -4,6 +4,7 @@ import { untrackCommand } from './untrack.js';
 import { pnlCommand } from './pnl.js';
 import { walletsCommand } from './wallets.js';
 import { followingCommand } from './following.js';
+import { statusCommand } from './status.js';
 import { setupCommand } from './setup.js';
 import type { BotCommand } from './types.js';
 
@@ -14,6 +15,7 @@ export const commands: BotCommand[] = [
   walletsCommand,
   followingCommand,
   pnlCommand,
+  statusCommand,
 ];
 
 export async function registerCommands(token: string, clientId: string, devGuildId?: string): Promise<void> {

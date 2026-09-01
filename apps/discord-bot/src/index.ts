@@ -80,7 +80,8 @@ client.on(Events.GuildCreate, async (guild) => {
   await channel
     .send(
       'Thanks for adding **Cryptonix**. Run `/setup` in the channel you want alerts in — ' +
-        'or `/setup channel:#some-channel` to pick a different one. Then `/track wallet` to start following a wallet.'
+        'or `/setup channel:#some-channel` to pick a different one. Then `/track wallet` to follow a ' +
+        'Solana wallet, or `/track twitter` to follow an X account. `/status` says whether it is all working.'
     )
     .catch(() => {});
 });

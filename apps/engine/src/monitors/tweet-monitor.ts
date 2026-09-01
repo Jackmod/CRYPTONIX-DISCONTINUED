@@ -26,9 +26,9 @@ export interface TweetAlertPayload {
  * Two rules make this safe to point at a live channel:
  *
  * 1. **The first poll of a handle never alerts.** Its recent tweets are
- *    recorded so the Calls tab has something to show immediately, but they are
- *    stored already-alerted. Otherwise following a new account would fire a
- *    page of its back catalogue into every configured server at once.
+ *    recorded so the Calls tab has something to show immediately, but none are
+ *    announced. Otherwise following a new account would fire a page of its
+ *    back catalogue into every configured server at once.
  * 2. **A tweet is remembered before it is published.** The row is written
  *    first, so a crash between the two costs one missed alert rather than a
  *    duplicate on every restart — the same ordering the coin scanner uses.
@@ -103,9 +103,10 @@ export class TweetMonitor {
   /**
    * Writes the tweet, and reports whether this call is the one that created it.
    *
-   * `DO NOTHING` rather than an upsert: a tweet's text does not change, and
-   * re-writing it would reset `alerted` and re-publish everything the next
-   * time a poll returned the same page.
+   * `DO NOTHING` rather than an upsert, and the return value is the whole
+   * point: an upsert would hand back a row every time, so `stored` would be
+   * true on a re-poll and the caller would publish the same tweet again. A
+   * tweet's text does not change, so there is nothing to update anyway.
    */
   private async remember(tweet: Tweet, handle: string, willAlert: boolean): Promise<boolean> {
     const inserted = await this.db

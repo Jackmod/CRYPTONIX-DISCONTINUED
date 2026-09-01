@@ -92,6 +92,11 @@ export class GuildConfigCache {
     this.pendingWrites.delete(guildId);
   }
 
+  /** Where this one server's alerts go, or undefined if it never ran /setup. */
+  get(guildId: string): string | undefined {
+    return this.channels.get(guildId);
+  }
+
   entries() {
     return [...this.channels].map(([guildId, alertChannelId]) => ({ guildId, alertChannelId }));
   }

@@ -5,8 +5,12 @@ import { describeError, type BotCommand } from './types.js';
 /**
  * Returns a message describing why the bot cannot post in `channelId`, or
  * null when it can.
+ *
+ * Exported because `/status` asks the same question: permissions granted at
+ * setup time can be revoked afterwards, and the failure is otherwise silent —
+ * alerts stop and nothing in Discord says why.
  */
-async function describeChannelProblem(
+export async function describeChannelProblem(
   interaction: Parameters<BotCommand['execute']>[0],
   channelId: string
 ): Promise<string | null> {

@@ -18,6 +18,15 @@ export interface AlertRecord {
   ts: string;
 }
 
+/** What the engine reports about itself. */
+export interface EngineHealth {
+  ok: boolean;
+  features?: {
+    coinScanner: boolean;
+    tweetMonitor: boolean;
+  };
+}
+
 /** An X account being followed. Mirrors apps/engine's tracked_handles row. */
 export interface TrackedHandle {
   id: number;
@@ -162,6 +171,11 @@ export class EngineClient {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ value }),
     });
+  }
+
+  async getHealth(): Promise<EngineHealth> {
+    const res = await this.request('/health');
+    return res.json() as Promise<EngineHealth>;
   }
 
   async listHandles(): Promise<TrackedHandle[]> {

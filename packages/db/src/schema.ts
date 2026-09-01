@@ -115,10 +115,12 @@ export const trackedHandles = pgTable('tracked_handles', {
  * poll returns the same recent tweets over and over, and an in-memory set
  * would forget them on restart and re-post the lot.
  *
- * `alerted` exists so the first poll of a newly tracked handle can record its
- * recent tweets — the Calls tab shows them immediately — WITHOUT firing a
- * burst of alerts into every configured Discord channel for things that were
- * posted before anyone asked to follow the account.
+ * `alerted` records whether a stored tweet was ever announced. It is NOT what
+ * stops a burst when a handle is first followed — the monitor decides that,
+ * and the primary key above is what stops a re-poll re-announcing anything.
+ * What this is for is telling those two apart afterwards: a row left false is
+ * one the monitor stored and then failed to publish, which is the fingerprint
+ * of a crash between the two writes and is otherwise invisible.
  */
 export const tweets = pgTable('tweets', {
   id: text('id').primaryKey(),

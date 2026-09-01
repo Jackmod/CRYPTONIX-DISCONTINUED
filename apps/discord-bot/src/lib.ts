@@ -16,3 +16,4 @@ export { buildWalletsEmbed } from './commands/wallets.js';
 export { walletChoices, displayLabel } from './commands/types.js';
 export { buildTweetMessage, isTweetAlertPayload } from './embeds/tweet.js';
 export { buildFollowingEmbed } from './commands/following.js';
+export { statusCommand } from './commands/status.js';
