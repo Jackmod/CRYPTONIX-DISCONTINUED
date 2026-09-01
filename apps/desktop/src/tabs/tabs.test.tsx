@@ -59,6 +59,7 @@ function fakeEngine(over: Partial<Record<keyof EngineClient, unknown>> = {}): En
     listCoins: vi.fn(async () => []),
     listAlertsSince: vi.fn(async () => []),
     trackWallet: vi.fn(async () => wallet()),
+    updateWallet: vi.fn(async () => wallet()),
     untrackWallet: vi.fn(async () => undefined),
     ...over,
   } as unknown as EngineClient;
@@ -541,6 +542,59 @@ describe('SettingsTab', () => {
     fireEvent.click(screen.getByText('Track wallet'));
     await waitFor(() => expect(screen.getByText('that address is already tracked')).toBeInTheDocument());
     expect(screen.getByLabelText('Solana address')).toHaveValue(ADDR_B);
+  });
+
+  it('renames a wallet without destroying its history', () => {
+    // The only alternative was untrack-and-retrack, which deletes the trades
+    // and PnL under it and costs a fresh Helius backfill to get back.
+    const { engine } = renderSettings({ wallets: [wallet()] });
+    fireEvent.click(screen.getByLabelText('Edit whale'));
+    fireEvent.change(screen.getByLabelText('Label for AAAA…1111'), { target: { value: '  Ansem  ' } });
+    fireEvent.click(screen.getByText('Save'));
+    expect(engine.updateWallet).toHaveBeenCalledWith(1, { label: 'Ansem', isMine: false });
+    expect(engine.untrackWallet).not.toHaveBeenCalled();
+  });
+
+  it('marks a wallet as yours after the fact', () => {
+    const { engine } = renderSettings({ wallets: [wallet()] });
+    fireEvent.click(screen.getByLabelText('Edit whale'));
+    fireEvent.click(screen.getByLabelText('Mark AAAA…1111 as yours'));
+    fireEvent.click(screen.getByText('Save'));
+    expect(engine.updateWallet).toHaveBeenCalledWith(1, { label: 'whale', isMine: true });
+  });
+
+  it('cannot save an empty label, which the engine would refuse anyway', () => {
+    renderSettings({ wallets: [wallet()] });
+    fireEvent.click(screen.getByLabelText('Edit whale'));
+    fireEvent.change(screen.getByLabelText('Label for AAAA…1111'), { target: { value: '   ' } });
+    expect(screen.getByText('Save')).toBeDisabled();
+  });
+
+  it('discards an edit that was cancelled', () => {
+    const { engine } = renderSettings({ wallets: [wallet()] });
+    fireEvent.click(screen.getByLabelText('Edit whale'));
+    fireEvent.change(screen.getByLabelText('Label for AAAA…1111'), { target: { value: 'nope' } });
+    fireEvent.click(screen.getByText('Cancel'));
+    expect(engine.updateWallet).not.toHaveBeenCalled();
+
+    // Reopening starts from the stored value, not from what was abandoned.
+    fireEvent.click(screen.getByLabelText('Edit whale'));
+    expect(screen.getByLabelText('Label for AAAA…1111')).toHaveValue('whale');
+  });
+
+  it('keeps the edit on screen when the engine refuses it', async () => {
+    const engine = fakeEngine({
+      updateWallet: vi.fn(async () => {
+        throw new EngineError('label must be 100 characters or fewer', 400);
+      }),
+    });
+    renderSettings({ engine, wallets: [wallet()] });
+    fireEvent.click(screen.getByLabelText('Edit whale'));
+    fireEvent.change(screen.getByLabelText('Label for AAAA…1111'), { target: { value: 'too long' } });
+    fireEvent.click(screen.getByText('Save'));
+
+    await waitFor(() => expect(screen.getByText('label must be 100 characters or fewer')).toBeInTheDocument());
+    expect(screen.getByLabelText('Label for AAAA…1111')).toHaveValue('too long');
   });
 
   it('asks before deleting a wallet history', () => {

@@ -144,6 +144,21 @@ export class EngineClient {
     return res.json() as Promise<Wallet>;
   }
 
+  /**
+   * Rename a wallet, or change whether it is one of yours.
+   *
+   * The address is not editable: changing it would point a wallet's whole
+   * recorded history at a different account.
+   */
+  async updateWallet(id: number, changes: { label?: string; isMine?: boolean }): Promise<Wallet> {
+    const res = await this.request(`/wallets/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(changes),
+    });
+    return res.json() as Promise<Wallet>;
+  }
+
   async untrackWallet(id: number): Promise<void> {
     // 204 No Content: there is no body to read.
     const res = await this.request(`/wallets/${id}`, { method: 'DELETE' });

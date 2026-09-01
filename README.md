@@ -110,6 +110,10 @@ Then, in any server the bot is in:
 /untrack wallet address:<address>       → stop following it, and release its Helius webhook
 ```
 
+Renaming a wallet, or marking one as yours after the fact, is done in the
+desktop app's **Settings** — untracking would delete its trades and PnL and
+cost a fresh Helius backfill to get back.
+
 `/pnl` and `/untrack` autocomplete the wallet, so nobody has to retype a
 44-character address. `/pnl` attaches a rendered calendar heatmap; the Unicode
 version stays in the embed as the fallback that copies as text and reads aloud.

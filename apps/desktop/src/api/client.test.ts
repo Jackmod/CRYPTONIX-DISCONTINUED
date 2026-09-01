@@ -78,6 +78,22 @@ describe('EngineClient', () => {
     expect(JSON.parse(String(init.body))).toEqual({ address: 'addr', label: 'label', isMine: true });
   });
 
+  it('patches only the fields it was given', async () => {
+    const fetchMock = stub(json({ id: 1, label: 'Ansem' }));
+    await new EngineClient('http://e', 'k').updateWallet(1, { label: 'Ansem' });
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe('http://e/wallets/1');
+    expect(init!.method).toBe('PATCH');
+    expect(JSON.parse(String(init!.body))).toEqual({ label: 'Ansem' });
+  });
+
+  it('surfaces the engine reason when a rename is refused', async () => {
+    stub(json({ error: 'label must be a non-empty string' }, 400));
+    await expect(new EngineClient('http://e', 'k').updateWallet(1, { label: '' })).rejects.toThrow(
+      'label must be a non-empty string'
+    );
+  });
+
   it('handles the empty 204 body on untrack', async () => {
     stub(new Response(null, { status: 204 }));
     await expect(new EngineClient('http://e', 'k').untrackWallet(3)).resolves.toBeUndefined();

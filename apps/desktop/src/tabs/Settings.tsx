@@ -43,6 +43,113 @@ function UntrackButton({ wallet, onConfirm }: { wallet: Wallet; onConfirm: () =>
 }
 
 /**
+ * One row of the tracked list, editable in place.
+ *
+ * Renaming goes through the engine's PATCH, not through untrack-and-retrack:
+ * that deletes the wallet's trades and PnL and then costs a fresh Helius
+ * backfill, which is an absurd price for fixing a typo.
+ */
+function WalletRow({
+  wallet,
+  onSave,
+  onRemove,
+}: {
+  wallet: Wallet;
+  onSave: (changes: { label: string; isMine: boolean }) => Promise<void>;
+  onRemove: () => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [label, setLabel] = useState(wallet.label);
+  const [isMine, setIsMine] = useState(wallet.isMine);
+  const [busy, setBusy] = useState(false);
+
+  const open = () => {
+    // Reopened from the row's current values, not from whatever was typed and
+    // abandoned last time.
+    setLabel(wallet.label);
+    setIsMine(wallet.isMine);
+    setEditing(true);
+  };
+
+  const save = async () => {
+    setBusy(true);
+    try {
+      await onSave({ label: label.trim(), isMine });
+      setEditing(false);
+    } catch {
+      // The banner above says what the engine refused; the row stays open on
+      // the unsaved edit rather than closing as though it had gone through.
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (!editing) {
+    return (
+      <tr className={wallet.isMine ? 'row-pinned' : undefined}>
+        <td>
+          <div className="ident">
+            <Identicon address={wallet.address} />
+            <span className="ident-name" title={displayLabel(wallet)}>
+              {displayLabel(wallet)}
+            </span>
+          </div>
+        </td>
+        <td style={{ color: 'var(--dim)' }}>{shortAddress(wallet.address)}</td>
+        <td style={{ color: 'var(--dim)' }}>{wallet.isMine ? 'yours' : ''}</td>
+        <td className="num">
+          <span style={{ display: 'inline-flex', gap: 'var(--s2)' }}>
+            <button className="btn" onClick={open} aria-label={`Edit ${displayLabel(wallet)}`}>
+              Edit
+            </button>
+            <UntrackButton wallet={wallet} onConfirm={onRemove} />
+          </span>
+        </td>
+      </tr>
+    );
+  }
+
+  return (
+    <tr className={wallet.isMine ? 'row-pinned' : undefined}>
+      <td>
+        <div className="ident">
+          <Identicon address={wallet.address} />
+          <input
+            className="input"
+            value={label}
+            onChange={(e) => setLabel(e.target.value)}
+            aria-label={`Label for ${shortAddress(wallet.address)}`}
+            autoFocus
+          />
+        </div>
+      </td>
+      <td style={{ color: 'var(--dim)' }}>{shortAddress(wallet.address)}</td>
+      <td>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 'var(--s1)', color: 'var(--dim)' }}>
+          <input
+            type="checkbox"
+            checked={isMine}
+            onChange={(e) => setIsMine(e.target.checked)}
+            aria-label={`Mark ${shortAddress(wallet.address)} as yours`}
+          />
+          mine
+        </label>
+      </td>
+      <td className="num">
+        <span style={{ display: 'inline-flex', gap: 'var(--s2)' }}>
+          <button className="btn btn-primary" onClick={save} disabled={busy || label.trim() === ''}>
+            {busy ? 'Saving…' : 'Save'}
+          </button>
+          <button className="btn" onClick={() => setEditing(false)}>
+            Cancel
+          </button>
+        </span>
+      </td>
+    </tr>
+  );
+}
+
+/**
  * Manage tracked wallets and where the app points (spec §5.3).
  *
  * Everything here writes through the engine, which is the single writer — so
@@ -99,6 +206,18 @@ export function SettingsTab({
     }
   };
 
+  const save = async (wallet: Wallet, changes: { label: string; isMine: boolean }) => {
+    setError(null);
+    try {
+      await engine.updateWallet(wallet.id, changes);
+      onWalletsChanged();
+    } catch (err) {
+      setError((err as Error).message);
+      // Rethrown so the row keeps the unsaved edit on screen.
+      throw err;
+    }
+  };
+
   return (
     <>
       <div className="view-head">
@@ -151,25 +270,18 @@ export function SettingsTab({
               <tr>
                 <th>Wallet</th>
                 <th>Address</th>
+                <th>Mine</th>
                 <th></th>
               </tr>
             </thead>
             <tbody>
               {sortWallets(wallets).map((wallet) => (
-                <tr key={wallet.id} className={wallet.isMine ? 'row-pinned' : undefined}>
-                  <td>
-                    <div className="ident">
-                      <Identicon address={wallet.address} />
-                      <span className="ident-name" title={displayLabel(wallet)}>
-                      {displayLabel(wallet)}
-                    </span>
-                    </div>
-                  </td>
-                  <td style={{ color: 'var(--dim)' }}>{shortAddress(wallet.address)}</td>
-                  <td className="num">
-                    <UntrackButton wallet={wallet} onConfirm={() => remove(wallet)} />
-                  </td>
-                </tr>
+                <WalletRow
+                  key={wallet.id}
+                  wallet={wallet}
+                  onSave={(changes) => save(wallet, changes)}
+                  onRemove={() => remove(wallet)}
+                />
               ))}
             </tbody>
           </table>

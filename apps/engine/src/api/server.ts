@@ -245,6 +245,60 @@ export function createServer(
     });
   }));
 
+  /**
+   * Rename a wallet, or change whether it is one of yours.
+   *
+   * Deliberately separate from tracking: the only way to fix a mislabelled
+   * wallet used to be untracking it, which deletes its trades and its PnL and
+   * then costs a fresh Helius backfill to get back. A label is a note to
+   * yourself and must be editable without touching the history under it.
+   *
+   * The address is not editable. Changing it would silently point a wallet's
+   * whole recorded history at a different account.
+   */
+  app.patch(
+    '/wallets/:id',
+    asyncRoute(async (req, res) => {
+      const walletId = parseWalletId(req, res);
+      if (walletId === null) return;
+
+      const { label, isMine } = (req.body ?? {}) as { label?: unknown; isMine?: unknown };
+      if (label === undefined && isMine === undefined) {
+        res.status(400).json({ error: 'nothing to change: pass label, isMine, or both' });
+        return;
+      }
+
+      const update: { label?: string; isMine?: boolean } = {};
+      if (label !== undefined) {
+        // Same rules as tracking: this label goes to the same embeds.
+        if (typeof label !== 'string' || label.trim() === '') {
+          res.status(400).json({ error: 'label must be a non-empty string' });
+          return;
+        }
+        if (label.length > MAX_LABEL_LENGTH) {
+          res.status(400).json({ error: `label must be ${MAX_LABEL_LENGTH} characters or fewer` });
+          return;
+        }
+        update.label = label;
+      }
+      if (isMine !== undefined) {
+        // Not Boolean(): coercing would turn a typo like "false" into true.
+        if (typeof isMine !== 'boolean') {
+          res.status(400).json({ error: 'isMine must be a boolean' });
+          return;
+        }
+        update.isMine = isMine;
+      }
+
+      const [updated] = await db.update(wallets).set(update).where(eq(wallets.id, walletId)).returning();
+      if (!updated) {
+        res.status(404).json({ error: 'wallet not found' });
+        return;
+      }
+      res.json(updated);
+    })
+  );
+
   app.get('/wallets/:id/trades', asyncRoute(async (req, res) => {
     const walletId = parseWalletId(req, res);
     if (walletId === null) return;

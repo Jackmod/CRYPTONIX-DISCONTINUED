@@ -28,6 +28,7 @@ function api(app: Parameters<typeof request>[0]) {
     get: (path: string) => auth(r.get(path)),
     post: (path: string) => auth(r.post(path)),
     put: (path: string) => auth(r.put(path)),
+    patch: (path: string) => auth(r.patch(path)),
     delete: (path: string) => auth(r.delete(path)),
   };
 }
@@ -718,6 +719,97 @@ describe('engine API', () => {
     expect(head.body.id).toBe(Math.max(...all.body.map((a: { id: number }) => a.id)));
     // Resuming from the head yields nothing, which is the whole point.
     expect((await api(app).get(`/alerts?since=${head.body.id}`)).body).toHaveLength(0);
+  });
+
+  it('PATCH /wallets/:id renames a wallet without touching its history', async () => {
+    // Untracking was the only way to fix a label, and that deletes the trades
+    // and the PnL under it, then costs a fresh Helius backfill to recover.
+    const app = buildApp();
+    const created = await api(app).post('/wallets').send({ address: VALID_ADDRESS, label: 'Unkown Whale' });
+    await request(app)
+      .post('/webhooks/helius')
+      .set('Authorization', WEBHOOK_SECRET)
+      .send([
+        {
+          signature: 'rename-1',
+          timestamp: 1_787_000_000,
+          type: 'SWAP',
+          tokenTransfers: [{ fromUserAccount: 'Pool', toUserAccount: VALID_ADDRESS, mint: 'M', tokenAmount: 1 }],
+          nativeTransfers: [{ fromUserAccount: VALID_ADDRESS, toUserAccount: 'Pool', amount: 1_000_000_000 }],
+        },
+      ]);
+
+    const before = await api(app).get(`/wallets/${created.body.id}/trades`);
+    expect(before.body).toHaveLength(1);
+
+    const patched = await api(app).patch(`/wallets/${created.body.id}`).send({ label: 'Ansem' });
+    expect(patched.status).toBe(200);
+    expect(patched.body.label).toBe('Ansem');
+    expect(patched.body.address).toBe(VALID_ADDRESS);
+
+    const after = await api(app).get(`/wallets/${created.body.id}/trades`);
+    expect(after.body).toHaveLength(1);
+  });
+
+  it('PATCH /wallets/:id can mark a wallet as yours, or unmark it', async () => {
+    const app = buildApp();
+    const created = await api(app).post('/wallets').send({ address: VALID_ADDRESS, label: 'W' });
+    expect(created.body.isMine).toBe(false);
+
+    expect((await api(app).patch(`/wallets/${created.body.id}`).send({ isMine: true })).body.isMine).toBe(true);
+    expect((await api(app).patch(`/wallets/${created.body.id}`).send({ isMine: false })).body.isMine).toBe(false);
+  });
+
+  it('PATCH /wallets/:id leaves the field that was not sent alone', async () => {
+    const app = buildApp();
+    const created = await api(app).post('/wallets').send({ address: VALID_ADDRESS, label: 'W', isMine: true });
+
+    const patched = await api(app).patch(`/wallets/${created.body.id}`).send({ label: 'Renamed' });
+    expect(patched.body.label).toBe('Renamed');
+    expect(patched.body.isMine).toBe(true);
+  });
+
+  it('PATCH /wallets/:id refuses a change that would say nothing', async () => {
+    const app = buildApp();
+    const created = await api(app).post('/wallets').send({ address: VALID_ADDRESS, label: 'W' });
+    expect((await api(app).patch(`/wallets/${created.body.id}`).send({})).status).toBe(400);
+  });
+
+  it('PATCH /wallets/:id refuses a label the embeds could not carry', async () => {
+    const app = buildApp();
+    const created = await api(app).post('/wallets').send({ address: VALID_ADDRESS, label: 'W' });
+    for (const label of ['', '   ', 42, {}, 'x'.repeat(101)]) {
+      const res = await api(app).patch(`/wallets/${created.body.id}`).send({ label });
+      expect(res.status, `label ${JSON.stringify(label)} must be rejected`).toBe(400);
+    }
+  });
+
+  it('PATCH /wallets/:id refuses a non-boolean isMine rather than coercing it', async () => {
+    // Boolean('false') is true, so coercion would flip the flag the wrong way.
+    const app = buildApp();
+    const created = await api(app).post('/wallets').send({ address: VALID_ADDRESS, label: 'W' });
+    expect((await api(app).patch(`/wallets/${created.body.id}`).send({ isMine: 'false' })).status).toBe(400);
+    expect((await api(app).get('/wallets')).body[0].isMine).toBe(false);
+  });
+
+  it('PATCH /wallets/:id does not let the address be rewritten', async () => {
+    // Changing it would point a wallet's whole recorded history at another account.
+    const app = buildApp();
+    const created = await api(app).post('/wallets').send({ address: VALID_ADDRESS, label: 'W' });
+    const patched = await api(app)
+      .patch(`/wallets/${created.body.id}`)
+      .send({ label: 'W2', address: 'So11111111111111111111111111111111111111112' });
+    expect(patched.body.address).toBe(VALID_ADDRESS);
+  });
+
+  it('PATCH /wallets/:id answers 404 for a wallet that is not there', async () => {
+    const app = buildApp();
+    expect((await api(app).patch('/wallets/99999').send({ label: 'x' })).status).toBe(404);
+  });
+
+  it('PATCH /wallets/:id needs the api key', async () => {
+    const app = buildApp();
+    expect((await request(app).patch('/wallets/1').send({ label: 'x' })).status).toBe(401);
   });
 
   it('GET /alerts/recent returns the NEWEST alerts, newest first', async () => {
