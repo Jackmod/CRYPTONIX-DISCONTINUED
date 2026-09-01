@@ -176,8 +176,10 @@ export class WalletMonitor {
   }
 
   /**
-   * Returns the distinct ids of wallets this batch is ABOUT — every wallet a
-   * transaction in it parsed against, whether or not the trade row was new.
+   * Reports which wallets this batch concerns, in two sets.
+   *
+   * `affected` is every wallet a transaction parsed against, whether or not
+   * the trade row was new. `withNewTrades` is the subset that gained a row.
    *
    * Deliberately not "wallets with new trades". A failed recompute makes the
    * route answer 500 so Helius redelivers, but on redelivery every trade hits
@@ -188,7 +190,9 @@ export class WalletMonitor {
    * arrive. Recomputing for a redelivered batch is cheap and idempotent;
    * silently serving wrong PnL is not.
    */
-  async handleWebhookPayload(transactions: HeliusEnhancedTransaction[]): Promise<number[]> {
+  async handleWebhookPayload(
+    transactions: HeliusEnhancedTransaction[]
+  ): Promise<{ affected: number[]; withNewTrades: number[] }> {
     // Fetch the tracked wallets once per batch, not once per transaction.
     // A failure here must NOT be swallowed: the route needs to see it and
     // return a non-2xx so Helius retries the whole batch. If we ate the
@@ -197,13 +201,15 @@ export class WalletMonitor {
     // there is no re-backfill path to recover them.
     const trackedWallets = await this.db.select().from(wallets);
 
-    const affectedWalletIds = new Set<number>();
+    const affected = new Set<number>();
+    const withNewTrades = new Set<number>();
 
     for (const tx of transactions) {
       for (const wallet of trackedWallets) {
         try {
-          const touched = await this.handleTransactionForWallet(tx, wallet);
-          if (touched) affectedWalletIds.add(wallet.id);
+          const outcome = await this.handleTransactionForWallet(tx, wallet);
+          if (outcome !== 'unrelated') affected.add(wallet.id);
+          if (outcome === 'inserted') withNewTrades.add(wallet.id);
         } catch (err) {
           // Per-wallet isolation: one wallet's failure must not stop the
           // others in the same batch (spec §9 fault isolation) — this stays
@@ -213,21 +219,24 @@ export class WalletMonitor {
       }
     }
 
-    return [...affectedWalletIds];
+    return { affected: [...affected], withNewTrades: [...withNewTrades] };
   }
 
   /**
-   * Returns true if this transaction concerns this wallet at all — a new trade
-   * row, or one already recorded. False only when the transaction is not a
-   * swap this wallet took part in.
+   * 'inserted' for a new trade row, 'duplicate' for one already recorded, and
+   * 'unrelated' when the transaction is not a swap this wallet took part in.
    *
-   * A duplicate still counts: the caller uses this to decide whose PnL to
-   * recompute, and a redelivery is exactly when a previously failed recompute
-   * needs to run again.
+   * A duplicate is distinguished from unrelated because a redelivery is
+   * exactly when a previously failed PnL recompute needs to run again — but
+   * the caller still needs to know it was a duplicate, so an ordinary
+   * redelivery does not re-walk a long-history wallet's whole trade table.
    */
-  private async handleTransactionForWallet(tx: HeliusEnhancedTransaction, wallet: typeof wallets.$inferSelect): Promise<boolean> {
+  private async handleTransactionForWallet(
+    tx: HeliusEnhancedTransaction,
+    wallet: typeof wallets.$inferSelect
+  ): Promise<'inserted' | 'duplicate' | 'unrelated'> {
     const parsed = parseSwap(tx, wallet.address);
-    if (!parsed) return false;
+    if (!parsed) return 'unrelated';
 
     const [trade] = await this.db
       .insert(walletTrades)
@@ -242,11 +251,8 @@ export class WalletMonitor {
       })
       .onConflictDoNothing()
       .returning();
-    if (!trade) {
-      // A signature already recorded. The wallet is still affected by this
-      // batch, so the caller must recompute it — see handleWebhookPayload.
-      return true;
-    }
+    // A signature already recorded: still this wallet's batch, but no new row.
+    if (!trade) return 'duplicate';
 
     const payload = {
       walletId: wallet.id,
@@ -263,6 +269,6 @@ export class WalletMonitor {
       .returning();
 
     this.alertBus.publish({ id: alert.id, type: alert.type, refId: alert.refId, payload: alert.payload });
-    return true;
+    return 'inserted';
   }
 }

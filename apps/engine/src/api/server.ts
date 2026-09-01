@@ -140,6 +140,18 @@ export function createServer(
   // value would authenticate every request. Fail at startup instead.
   if (!apiKey) throw new Error('createServer requires a non-empty apiKey');
 
+  /**
+   * Wallets whose PnL recompute failed and must be retried.
+   *
+   * Recomputing for every wallet a batch mentions is what makes the 500 ->
+   * Helius-redelivery retry work at all, but doing it on EVERY redelivery
+   * re-walks a long-history wallet's whole trade table inline before the 200,
+   * which can exceed Helius's own delivery timeout. Remembering the failures
+   * restores the cheap path for an ordinary duplicate while still retrying the
+   * ones that actually need it.
+   */
+  const walletsNeedingRecompute = new Set<number>();
+
   const app = express();
 
   // Auth first, parser second. With the parser mounted first, a malformed body
@@ -432,7 +444,9 @@ export function createServer(
     // that into a 500 — letting it propagate here (no try/catch) is
     // intentional, so Helius sees a non-2xx and retries the batch instead of
     // considering lost trades "delivered".
-    const affectedWalletIds = await walletMonitor.handleWebhookPayload(Array.isArray(body) ? body : [body]);
+    const { affected, withNewTrades } = await walletMonitor.handleWebhookPayload(
+      Array.isArray(body) ? body : [body]
+    );
 
     // Recompute PnL for every wallet this batch is ABOUT — including ones
     // whose trades were already recorded. That is what makes the retry below
@@ -442,8 +456,20 @@ export function createServer(
     // Done BEFORE responding 200: if a recompute throws, we still want Helius
     // to retry the batch (consistent with the batch-failure handling above),
     // rather than reporting success while PnL is left stale.
-    for (const walletId of affectedWalletIds) {
-      await pnlTracker.recomputePnl(walletId);
+    for (const walletId of affected) {
+      const hadNewTrade = withNewTrades.includes(walletId);
+      if (!hadNewTrade && !walletsNeedingRecompute.has(walletId)) continue;
+
+      try {
+        await pnlTracker.recomputePnl(walletId);
+        walletsNeedingRecompute.delete(walletId);
+      } catch (err) {
+        // Remembered so the redelivery this 500 triggers actually retries it,
+        // instead of short-circuiting on "no new trades" and answering 200
+        // with pnl_daily left stale.
+        walletsNeedingRecompute.add(walletId);
+        throw err;
+      }
     }
 
     res.status(200).send();

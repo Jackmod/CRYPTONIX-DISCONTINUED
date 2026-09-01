@@ -81,6 +81,8 @@ const stream = new AlertStream({ url: env.engineWsUrl, apiKey: env.engineApiKey 
 
 /** Must match the engine's MAX_ALERT_REPLAY. */
 const ALERT_PAGE_SIZE = 50;
+/** How often to re-check for work a reconnect would otherwise never surface. */
+const CATCH_UP_SWEEP_MS = 60_000;
 
 /**
  * Owns the alert cursor, de-duplication and backlog walk.
@@ -171,15 +173,26 @@ client.once(Events.ClientReady, async (ready) => {
     });
   });
 
-  // Every (re)connection asks for what it missed while it was away.
-  stream.onOpen(() => {
+  function runCatchUp(reason: string) {
     void replay.catchUp().then(
       (posted) => {
-        if (posted > 0) console.log(`replayed ${posted} alert(s) missed while disconnected`);
+        if (posted > 0) console.log(`replayed ${posted} alert(s) (${reason})`);
       },
-      (err) => console.error('alert catch-up failed', err)
+      (err) => console.error(`alert catch-up failed (${reason})`, err)
     );
-  });
+  }
+
+  // Every (re)connection asks for what it missed while it was away.
+  stream.onOpen(() => runCatchUp('reconnected'));
+
+  // ...and a periodic sweep, because a reconnect is otherwise the ONLY thing
+  // that ever calls catchUp. Two ways that stranded work indefinitely on a
+  // socket that stays up: a transient 500 from GET /alerts aborted a walk and
+  // left the rest of the backlog unfetched, and a failed live delivery pinned
+  // the cursor below its id while retries only ever happen inside a walk. It
+  // costs one request returning an empty page when there is nothing to do.
+  const sweep = setInterval(() => runCatchUp('periodic sweep'), CATCH_UP_SWEEP_MS);
+  sweep.unref?.();
 
   stream.start();
   console.log(`subscribed to engine alerts at ${env.engineWsUrl}`);

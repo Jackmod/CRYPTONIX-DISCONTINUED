@@ -50,6 +50,7 @@ describe('engine API', () => {
     return {
       app: createServer(db, walletMonitor, pnlTracker, alertBus, solanaRpc, WEBHOOK_SECRET, API_KEY),
       helius,
+      pnlTracker,
       db,
     };
   }
@@ -790,18 +791,17 @@ describe('engine API', () => {
     expect((await api(app).get('/alerts?since=')).status).toBe(400);
   });
 
-  it('recomputes PnL on a redelivered batch, so a failed recompute is retried', async () => {
-    // The route answers 500 on a recompute failure so Helius redelivers. But
-    // on redelivery every trade hits onConflictDoNothing, so a "new trades
-    // only" result was empty, the recompute was skipped, and the route
-    // answered 200 -- leaving pnl_daily stale and /pnl wrong until some
-    // unrelated future trade arrived.
-    const { app } = buildAppWithMocks();
+  it('retries a failed recompute on the redelivery its own 500 triggers', async () => {
+    // The route answers 500 so Helius redelivers. On redelivery every trade
+    // hits onConflictDoNothing and looks like a duplicate, so a 'new trades
+    // only' rule skipped the recompute and answered 200 -- leaving pnl_daily
+    // stale and /pnl wrong until some unrelated future trade arrived.
+    const { app, pnlTracker } = buildAppWithMocks();
     await api(app).post('/wallets').send({ address: VALID_ADDRESS, label: 'W' });
 
     const batch = [
       {
-        signature: 'redelivered-sig',
+        signature: 'retry-recompute-sig',
         timestamp: 1_787_000_000,
         type: 'SWAP',
         tokenTransfers: [{ fromUserAccount: 'Pool', toUserAccount: VALID_ADDRESS, mint: 'M', tokenAmount: 100 }],
@@ -809,21 +809,45 @@ describe('engine API', () => {
       },
     ];
 
+    const spy = vi.spyOn(pnlTracker, 'recomputePnl').mockRejectedValueOnce(new Error('transient db failure'));
+
     const first = await request(app).post('/webhooks/helius').set('Authorization', WEBHOOK_SECRET).send(batch);
-    expect(first.status).toBe(200);
+    expect(first.status).toBe(500); // so Helius will redeliver
 
-    const wallets = await api(app).get('/wallets');
-    const walletId = wallets.body[0].id;
-
-    // Wipe the derived rows to stand in for a recompute that never ran.
-    await db.execute(`DELETE FROM pnl_daily WHERE wallet_id = ${walletId}`);
-    expect((await api(app).get(`/wallets/${walletId}/pnl`)).body).toHaveLength(0);
-
-    // The redelivery must rebuild them.
+    // The redelivery carries no NEW trades, yet the recompute must still run.
     const second = await request(app).post('/webhooks/helius').set('Authorization', WEBHOOK_SECRET).send(batch);
     expect(second.status).toBe(200);
+    expect(spy).toHaveBeenCalledTimes(2);
 
-    expect((await api(app).get(`/wallets/${walletId}/pnl`)).body.length).toBeGreaterThan(0);
+    const wallets = await api(app).get('/wallets');
+    expect((await api(app).get(`/wallets/${wallets.body[0].id}/pnl`)).body.length).toBeGreaterThan(0);
+    spy.mockRestore();
+  });
+
+  it('does not re-walk a wallet on an ordinary redelivery that never failed', async () => {
+    // Recomputing on EVERY redelivery re-walks a long-history wallet's whole
+    // trade table inline before the 200, which can exceed Helius's own
+    // delivery timeout.
+    const { app, pnlTracker } = buildAppWithMocks();
+    await api(app).post('/wallets').send({ address: VALID_ADDRESS, label: 'W' });
+
+    const batch = [
+      {
+        signature: 'no-rewalk-sig',
+        timestamp: 1_787_000_000,
+        type: 'SWAP',
+        tokenTransfers: [{ fromUserAccount: 'Pool', toUserAccount: VALID_ADDRESS, mint: 'M', tokenAmount: 100 }],
+        nativeTransfers: [{ fromUserAccount: VALID_ADDRESS, toUserAccount: 'Pool', amount: 1_000_000_000 }],
+      },
+    ];
+
+    await request(app).post('/webhooks/helius').set('Authorization', WEBHOOK_SECRET).send(batch);
+    const spy = vi.spyOn(pnlTracker, 'recomputePnl');
+
+    await request(app).post('/webhooks/helius').set('Authorization', WEBHOOK_SECRET).send(batch);
+
+    expect(spy).not.toHaveBeenCalled();
+    spy.mockRestore();
   });
 
   it('still records a redelivered trade only once', async () => {
