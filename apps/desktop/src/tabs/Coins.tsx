@@ -22,6 +22,17 @@ function foundAgo(firstSeenAt: string, now: number): string {
   return `${Math.floor(hours / 24)}d ago`;
 }
 
+/**
+ * A coin's name on screen.
+ *
+ * A token can genuinely ship without a symbol, and a nameless row cannot be
+ * told apart from its neighbours.
+ */
+function displaySymbol(coin: { symbol: string; mint: string }): string {
+  const symbol = coin.symbol.trim();
+  return symbol === '' ? shortAddress(coin.mint) : symbol;
+}
+
 /** Ranked momentum list from the scanner, Axiom button per row (spec §5.3). */
 export function CoinsTab({ engine, liveToken = 0 }: { engine: EngineClient; liveToken?: number }) {
   const [coins, setCoins] = useState<Coin[] | null>(null);
@@ -87,9 +98,11 @@ export function CoinsTab({ engine, liveToken = 0 }: { engine: EngineClient; live
                   <tr key={coin.mint}>
                     <td>
                       <div className="ident">
-                        <CoinLogo mint={coin.mint} symbol={coin.symbol} imageUrl={coin.imageUrl} />
+                        <CoinLogo mint={coin.mint} symbol={displaySymbol(coin)} imageUrl={coin.imageUrl} />
                         <div style={{ minWidth: 0 }}>
-                          <div className="ident-name">{coin.symbol}</div>
+                          <div className="ident-name" title={displaySymbol(coin)}>
+                            {displaySymbol(coin)}
+                          </div>
                           <div className="ident-sub">{shortAddress(coin.mint)}</div>
                         </div>
                       </div>
@@ -101,7 +114,10 @@ export function CoinsTab({ engine, liveToken = 0 }: { engine: EngineClient; live
                         <div className="meter-track">
                           <div
                             className="meter-fill"
-                            style={{ width: `${coin.momentumScore ?? 0}%` }}
+                            // Clamped: a score outside 0-100 is corrupt data, and
+                            // a bar wider than its track would misrepresent it.
+                            // The number beside it stays exactly as reported.
+                            style={{ width: `${Math.max(0, Math.min(100, coin.momentumScore ?? 0))}%` }}
                             data-testid="meter-fill"
                           />
                         </div>

@@ -157,6 +157,16 @@ describe('WalletsTab', () => {
     await waitFor(() => expect(screen.getByText('No trades recorded yet.')).toBeInTheDocument());
   });
 
+  it('names a wallet with no label by its address, rather than leaving the row blank', async () => {
+    render(<WalletsTab engine={fakeEngine()} wallets={[wallet({ label: '' })]} error={null} />);
+    expect(screen.getByRole('button', { name: 'AAAA…1111' })).toBeInTheDocument();
+  });
+
+  it('keeps the whole label available on hover when it is truncated on screen', () => {
+    render(<WalletsTab engine={fakeEngine()} wallets={[wallet({ label: 'x'.repeat(120) })]} error={null} />);
+    expect(screen.getByRole('button', { name: 'x'.repeat(120) })).toHaveAttribute('title', 'x'.repeat(120));
+  });
+
   it('opens a wallet from the keyboard, not only by clicking the row', async () => {
     // Regression: the row was a <tr onClick>, unreachable by tab or Enter.
     const engine = fakeEngine({ listTrades: vi.fn(async () => [trade()]) });
@@ -254,6 +264,23 @@ describe('CoinsTab', () => {
     expect(fills[1]).toHaveStyle({ width: '12%' });
     // Regression: as a <span> the fill was inline, so no width ever applied.
     expect(fills[0].tagName).toBe('DIV');
+  });
+
+  it('names a coin with no symbol by its mint, rather than leaving the row blank', async () => {
+    const rows = [coin({ symbol: '  ', mint: 'MintMintMintMintMintMintMintMintMintMint11' })];
+    render(<CoinsTab engine={fakeEngine({ listCoins: vi.fn(async () => rows) })} />);
+    await waitFor(() => expect(screen.getAllByText('Mint…nt11').length).toBeGreaterThan(0));
+  });
+
+  it('clamps a corrupt score so the bar cannot overflow its track', async () => {
+    const rows = [coin({ momentumScore: 250 }), coin({ mint: 'B', symbol: 'NEG', momentumScore: -40 })];
+    render(<CoinsTab engine={fakeEngine({ listCoins: vi.fn(async () => rows) })} />);
+    await waitFor(() => expect(screen.getByText('NEG')).toBeInTheDocument());
+    const fills = screen.getAllByTestId('meter-fill');
+    expect(fills[0]).toHaveStyle({ width: '100%' });
+    expect(fills[1]).toHaveStyle({ width: '0%' });
+    // The number stays honest about what was actually reported.
+    expect(screen.getByText('250')).toBeInTheDocument();
   });
 
   it('shows a zero-width bar rather than a full one when the score is missing', async () => {

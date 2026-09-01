@@ -46,7 +46,7 @@ export function walletChoices(
   });
 
   return matches.slice(0, MAX_CHOICES).map((w) => ({
-    name: clampChoiceName(`${w.label}${w.isMine ? ' (yours)' : ''} — ${shortAddress(w.address)}`),
+    name: clampChoiceName(`${displayLabel(w)}${w.isMine ? ' (yours)' : ''} — ${shortAddress(w.address)}`),
     value: w.address,
   }));
 }
@@ -73,4 +73,16 @@ export function describeError(err: unknown): string {
 
 export function shortAddress(address: string): string {
   return address.length <= 12 ? address : `${address.slice(0, 4)}…${address.slice(-4)}`;
+}
+
+/**
+ * What to call a wallet on screen.
+ *
+ * The engine rejects an empty label, but a row predating that rule — or one
+ * written by anything else against the same database — would otherwise show
+ * as a nameless entry nobody can pick out of a list.
+ */
+export function displayLabel(wallet: { label: string; address: string }): string {
+  const label = wallet.label.trim();
+  return label === '' ? shortAddress(wallet.address) : label;
 }

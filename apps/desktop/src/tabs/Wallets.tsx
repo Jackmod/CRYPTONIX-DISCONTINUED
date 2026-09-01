@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { summarizePnl } from '@cryptonix/core';
 import type { DailyPnl, EngineClient, Trade, Wallet } from '../api/client';
 import { Identicon } from '../components/Identicon';
-import { Sol, shortAddress } from '../components/Money';
+import { Sol, displayLabel, shortAddress } from '../components/Money';
 
 /**
  * All-time PnL for one wallet, alongside its trades (spec §5.3).
@@ -155,7 +155,7 @@ function TradeHistory({
         <button className="btn" onClick={onBack}>
           ← Wallets
         </button>
-        <h1 className="view-title">{wallet.label}</h1>
+        <h1 className="view-title">{displayLabel(wallet)}</h1>
         <span className="view-sub">{shortAddress(wallet.address)}</span>
       </div>
 
@@ -276,8 +276,12 @@ export function WalletsTab({
                           which left the whole table unreachable by keyboard.
                           The row click stays as a convenience for the mouse.
                         */}
-                        <button className="link-btn ident-name" onClick={() => setSelected(wallet)}>
-                          {wallet.label}
+                        <button
+                          className="link-btn ident-name"
+                          title={displayLabel(wallet)}
+                          onClick={() => setSelected(wallet)}
+                        >
+                          {displayLabel(wallet)}
                         </button>
                         {wallet.isMine && <div className="ident-sub">yours</div>}
                       </div>

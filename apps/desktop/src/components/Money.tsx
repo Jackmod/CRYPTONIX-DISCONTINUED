@@ -24,3 +24,15 @@ export function compactUsd(value: number): string {
 export function shortAddress(address: string): string {
   return address.length <= 12 ? address : `${address.slice(0, 4)}…${address.slice(-4)}`;
 }
+
+/**
+ * What to call a wallet on screen.
+ *
+ * The engine rejects an empty label, but a row predating that rule — or one
+ * written by anything else against the same database — would otherwise render
+ * a nameless row that cannot be told apart or clicked with confidence.
+ */
+export function displayLabel(wallet: { label: string; address: string }): string {
+  const label = wallet.label.trim();
+  return label === '' ? shortAddress(wallet.address) : label;
+}

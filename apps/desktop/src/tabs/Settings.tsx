@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import type { EngineClient, Wallet } from '../api/client';
 import { Identicon } from '../components/Identicon';
-import { shortAddress } from '../components/Money';
+import { displayLabel, shortAddress } from '../components/Money';
 import { sortWallets } from './Wallets';
 
 export interface Connection {
@@ -28,7 +28,11 @@ function UntrackButton({ wallet, onConfirm }: { wallet: Wallet; onConfirm: () =>
   return (
     <span style={{ display: 'inline-flex', gap: 'var(--s2)', alignItems: 'center' }}>
       <span style={{ color: 'var(--dim)', fontSize: 11 }}>Delete its history?</span>
-      <button className="btn btn-danger" onClick={onConfirm} aria-label={`Confirm untracking ${wallet.label}`}>
+      <button
+        className="btn btn-danger"
+        onClick={onConfirm}
+        aria-label={`Confirm untracking ${displayLabel(wallet)}`}
+      >
         Untrack
       </button>
       <button className="btn" onClick={() => setArmed(false)}>
@@ -156,7 +160,9 @@ export function SettingsTab({
                   <td>
                     <div className="ident">
                       <Identicon address={wallet.address} />
-                      <span className="ident-name">{wallet.label}</span>
+                      <span className="ident-name" title={displayLabel(wallet)}>
+                      {displayLabel(wallet)}
+                    </span>
                     </div>
                   </td>
                   <td style={{ color: 'var(--dim)' }}>{shortAddress(wallet.address)}</td>

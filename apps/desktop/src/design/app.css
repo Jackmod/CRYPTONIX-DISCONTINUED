@@ -126,6 +126,17 @@
   align-items: baseline;
   gap: var(--s3);
   margin-bottom: var(--s4);
+  flex-wrap: wrap;
+}
+/*
+ * A <select> sizes to its widest option, so a hundred-character wallet label
+ * pushed the month controls to the edge and wrapped "2026-09" onto two lines.
+ */
+.view-head select.input {
+  max-width: 24ch;
+}
+.view-head .view-sub {
+  white-space: nowrap;
 }
 .view-title {
   margin: 0;
@@ -195,6 +206,13 @@
 }
 .ident-name {
   color: var(--text-bright);
+  /*
+   * A table cell sizes to its content, so overflow:hidden alone never fired
+   * and a 100-character label pushed every other column off screen. The cap
+   * is what makes the ellipsis happen; the full text stays in the title.
+   */
+  display: block;
+  max-width: 30ch;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

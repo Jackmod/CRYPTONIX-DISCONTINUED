@@ -1,5 +1,5 @@
 import { EmbedBuilder, InteractionContextType, SlashCommandBuilder } from 'discord.js';
-import { describeError, shortAddress, type BotCommand } from './types.js';
+import { describeError, displayLabel, shortAddress, type BotCommand } from './types.js';
 import type { Wallet } from '../engine/client.js';
 
 const PHOSPHOR = 0xffb000;
@@ -31,7 +31,7 @@ export function buildWalletsEmbed(wallets: Wallet[]): EmbedBuilder {
   const lines = shown.map((wallet) => {
     // A label is free text from whoever tracked it. Backticks would break out
     // of the code span, and markdown would let it style the whole line.
-    const label = escapeMarkdown(wallet.label);
+    const label = escapeMarkdown(displayLabel(wallet));
     const status = wallet.backfillStatus === 'done' ? '' : ` · ${wallet.backfillStatus}`;
     return `${wallet.isMine ? '★' : '·'} **${label}** — \`${shortAddress(wallet.address)}\`${status}`;
   });

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { buildHeatmapGrid, summarizePnl, type DailyPnlRow } from '@cryptonix/core';
 import type { DailyPnl, EngineClient, Trade, Wallet } from '../api/client';
-import { Sol, shortAddress } from '../components/Money';
+import { Sol, displayLabel, shortAddress } from '../components/Money';
 import { sortWallets } from './Wallets';
 
 /** Current month in UTC, matching the calendar's own arithmetic. */
@@ -119,7 +119,7 @@ export function PnlTab({ engine, wallets }: { engine: EngineClient; wallets: Wal
         >
           {ordered.map((w) => (
             <option key={w.id} value={w.id}>
-              {w.isMine ? `${w.label} (yours)` : w.label}
+              {w.isMine ? `${displayLabel(w)} (yours)` : displayLabel(w)}
             </option>
           ))}
         </select>

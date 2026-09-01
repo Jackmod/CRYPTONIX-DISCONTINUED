@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { Identicon } from './Identicon';
 import { CoinLogo } from './CoinLogo';
 import { StatusCursor } from './StatusCursor';
-import { Sol, compactUsd, shortAddress } from './Money';
+import { Sol, compactUsd, displayLabel, shortAddress } from './Money';
 import { ExternalLink } from './ExternalLink';
 import { LiveRail } from './LiveRail';
 import type { FeedItem } from '../api/feed';
@@ -151,6 +151,17 @@ describe('Money', () => {
   it('shortens a long address but leaves a short one alone', () => {
     expect(shortAddress(ADDR)).toBe('So11…1112');
     expect(shortAddress('short')).toBe('short');
+  });
+
+  it('names a wallet by its label', () => {
+    expect(displayLabel({ label: 'whale', address: ADDR })).toBe('whale');
+  });
+
+  it('falls back to the address when a label is empty or only spaces', () => {
+    // A nameless row cannot be told apart from its neighbours or clicked with
+    // any confidence about which wallet is being opened.
+    expect(displayLabel({ label: '', address: ADDR })).toBe('So11…1112');
+    expect(displayLabel({ label: '   ', address: ADDR })).toBe('So11…1112');
   });
 });
 

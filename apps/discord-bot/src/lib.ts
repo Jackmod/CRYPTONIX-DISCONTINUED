@@ -13,4 +13,4 @@ export { renderHeatmapImage, heatmapImageSize } from './embeds/heatmap-image.js'
 export { AlertReplay } from './alerts/replay.js';
 export { buildNewCoinMessage, isNewCoinAlertPayload } from './embeds/new-coin.js';
 export { buildWalletsEmbed } from './commands/wallets.js';
-export { walletChoices } from './commands/types.js';
+export { walletChoices, displayLabel } from './commands/types.js';

@@ -76,6 +76,10 @@ describe('walletChoices', () => {
     expect(choices[0].name.length).toBeLessThanOrEqual(100);
   });
 
+  it('names an unlabelled wallet by its address in the suggestions too', () => {
+    expect(walletChoices([wallet({ label: '' })], '')[0].name).toContain('AAAA…1111');
+  });
+
   it('returns nothing when nothing matches, rather than everything', () => {
     expect(walletChoices([wallet({ label: 'whale' })], 'zzzz')).toEqual([]);
   });
@@ -177,6 +181,11 @@ describe('buildWalletsEmbed', () => {
     const embed = buildWalletsEmbed([wallet({ label: '**pwned** `x`' })]).toJSON();
     expect(embed.description).toContain('\\*\\*pwned\\*\\*');
     expect(embed.description).not.toContain('**pwned**');
+  });
+
+  it('names a wallet with no label by its address, not by nothing at all', () => {
+    const embed = buildWalletsEmbed([wallet({ label: '  ' })]).toJSON();
+    expect(embed.description).toContain('AAAA…1111');
   });
 
   it('stays inside the description limit on a very long list', () => {

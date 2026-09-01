@@ -1,6 +1,6 @@
 import { InteractionContextType, SlashCommandBuilder } from 'discord.js';
 import { buildPnlReply } from '../embeds/pnl.js';
-import { describeError, walletChoices, type BotCommand } from './types.js';
+import { describeError, displayLabel, walletChoices, type BotCommand } from './types.js';
 
 const MONTH_PATTERN = /^(\d{4})-(\d{2})$/;
 
@@ -87,7 +87,7 @@ export const pnlCommand: BotCommand = {
       }
 
       const rows = await engine.getPnl(wallet.id);
-      await interaction.editReply(buildPnlReply({ walletLabel: wallet.label, month, rows }));
+      await interaction.editReply(buildPnlReply({ walletLabel: displayLabel(wallet), month, rows }));
     } catch (err) {
       await interaction.editReply(describeError(err));
     }

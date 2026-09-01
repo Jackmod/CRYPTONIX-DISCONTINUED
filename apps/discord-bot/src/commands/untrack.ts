@@ -1,5 +1,5 @@
 import { InteractionContextType, PermissionFlagsBits, SlashCommandBuilder } from 'discord.js';
-import { describeError, shortAddress, walletChoices, type BotCommand } from './types.js';
+import { describeError, displayLabel, shortAddress, walletChoices, type BotCommand } from './types.js';
 
 export const untrackCommand: BotCommand = {
   data: new SlashCommandBuilder()
@@ -64,7 +64,9 @@ export const untrackCommand: BotCommand = {
       }
 
       await engine.untrackWallet(wallet.id);
-      await interaction.editReply(`🗑️ Stopped tracking **${wallet.label}** and released its Helius webhook.`);
+      await interaction.editReply(
+        `🗑️ Stopped tracking **${displayLabel(wallet)}** and released its Helius webhook.`
+      );
     } catch (err) {
       await interaction.editReply(describeError(err));
     }
