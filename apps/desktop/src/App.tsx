@@ -137,7 +137,7 @@ export function App() {
           <WalletsTab engine={engine} wallets={wallets} error={walletsError} liveToken={latestId} />
         )}
         {tab === 'Coins' && <CoinsTab engine={engine} liveToken={latestId} />}
-        {tab === 'Calls' && <CallsTab />}
+        {tab === 'Calls' && <CallsTab engine={engine} liveToken={latestId} />}
         {tab === 'PnL' && <PnlTab engine={engine} wallets={wallets} />}
         {tab === 'Settings' && (
           <SettingsTab

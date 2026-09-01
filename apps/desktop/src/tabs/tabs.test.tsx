@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
-import type { Coin, DailyPnl, EngineClient, Trade, Wallet } from '../api/client';
+import type { Coin, DailyPnl, EngineClient, StoredTweet, Trade, Wallet } from '../api/client';
 import { EngineError } from '../api/client';
 import { WalletsTab, sortWallets } from './Wallets';
 import { CoinsTab } from './Coins';
@@ -57,6 +57,10 @@ function fakeEngine(over: Partial<Record<keyof EngineClient, unknown>> = {}): En
     listPnl: vi.fn(async () => []),
     getBalance: vi.fn(async () => 1.5),
     listCoins: vi.fn(async () => []),
+    listHandles: vi.fn(async () => []),
+    trackHandle: vi.fn(async () => ({ id: 1, handle: 'ansem' })),
+    untrackHandle: vi.fn(async () => undefined),
+    listTweets: vi.fn(async () => []),
     listAlertsSince: vi.fn(async () => []),
     trackWallet: vi.fn(async () => wallet()),
     updateWallet: vi.fn(async () => wallet()),
@@ -352,10 +356,114 @@ describe('CoinsTab', () => {
 });
 
 describe('CallsTab', () => {
-  it('states what it needs instead of showing an invented feed', () => {
-    render(<CallsTab />);
-    expect(screen.getByText('Twitter tracking needs a provider first.')).toBeInTheDocument();
-    expect(screen.getByText('TwitterAPI.io')).toBeInTheDocument();
+  const handle = { id: 1, handle: 'ansem', lastTweetId: null, addedAt: '2026-09-01T00:00:00.000Z' };
+  const tweet = (over: Partial<StoredTweet> = {}): StoredTweet => ({
+    id: '1900000000000000002',
+    handle: 'ansem',
+    authorName: 'Ansem',
+    authorAvatarUrl: 'https://pbs.twimg.com/a.jpg',
+    text: 'sending it',
+    media: [],
+    url: 'https://x.com/ansem/status/1900000000000000002',
+    likeCount: 12,
+    replyCount: 3,
+    postedAt: new Date(Date.now() - 5 * 60_000).toISOString(),
+    ...over,
+  });
+
+  it('points at both ways to follow an account when none are', async () => {
+    render(<CallsTab engine={fakeEngine()} />);
+    await waitFor(() => expect(screen.getByText('No accounts followed yet.')).toBeInTheDocument());
+    expect(screen.getByText('/track twitter')).toBeInTheDocument();
+  });
+
+  it('follows a handle through the engine, so the bot sees it too', async () => {
+    const engine = fakeEngine();
+    render(<CallsTab engine={engine} />);
+    await waitFor(() => expect(engine.listHandles).toHaveBeenCalled());
+
+    fireEvent.change(screen.getByLabelText('X handle'), { target: { value: '  @ansem  ' } });
+    fireEvent.click(screen.getByText('Follow'));
+    await waitFor(() => expect(engine.trackHandle).toHaveBeenCalledWith('@ansem'));
+  });
+
+  it('cannot submit an empty handle', async () => {
+    render(<CallsTab engine={fakeEngine()} />);
+    await waitFor(() => expect(screen.getByText('Follow')).toBeDisabled());
+  });
+
+  it('lists followed handles as removable chips', async () => {
+    const engine = fakeEngine({ listHandles: vi.fn(async () => [handle]) });
+    render(<CallsTab engine={engine} />);
+    await waitFor(() => expect(screen.getByText('@ansem')).toBeInTheDocument());
+
+    fireEvent.click(screen.getByLabelText('Stop following @ansem'));
+    await waitFor(() => expect(engine.untrackHandle).toHaveBeenCalledWith(1));
+  });
+
+  it('renders a tweet card with author, handle, text and a link back to X', async () => {
+    const engine = fakeEngine({ listHandles: vi.fn(async () => [handle]), listTweets: vi.fn(async () => [tweet()]) });
+    render(<CallsTab engine={engine} />);
+
+    await waitFor(() => expect(screen.getByText('sending it')).toBeInTheDocument());
+    expect(screen.getByText('Ansem')).toBeInTheDocument();
+    expect(screen.getByAltText('Ansem avatar')).toHaveAttribute('src', 'https://pbs.twimg.com/a.jpg');
+    expect(screen.getByText('View on X')).toHaveAttribute(
+      'href',
+      'https://x.com/ansem/status/1900000000000000002'
+    );
+    expect(screen.getByText('5m')).toBeInTheDocument();
+  });
+
+  it('falls back to a generated mark when an avatar url has rotted', async () => {
+    const engine = fakeEngine({ listHandles: vi.fn(async () => [handle]), listTweets: vi.fn(async () => [tweet()]) });
+    render(<CallsTab engine={engine} />);
+    await waitFor(() => expect(screen.getByAltText('Ansem avatar')).toBeInTheDocument());
+
+    fireEvent.error(screen.getByAltText('Ansem avatar'));
+    expect(screen.getByLabelText('Identicon for ansem')).toBeInTheDocument();
+  });
+
+  it('shows an attached picture, and drops it if it fails to load', async () => {
+    const withMedia = tweet({ media: [{ type: 'photo', url: 'https://pbs/1.jpg' }] });
+    const engine = fakeEngine({
+      listHandles: vi.fn(async () => [handle]),
+      listTweets: vi.fn(async () => [withMedia]),
+    });
+    const { container } = render(<CallsTab engine={engine} />);
+    await waitFor(() => expect(container.querySelector('.tweet-media')).toBeTruthy());
+
+    fireEvent.error(container.querySelector('.tweet-media')!);
+    expect(container.querySelector('.tweet-media')).toBeNull();
+  });
+
+  it('explains that only discovery needs a key, once a handle is followed', async () => {
+    const engine = fakeEngine({ listHandles: vi.fn(async () => [handle]) });
+    render(<CallsTab engine={engine} />);
+    await waitFor(() => expect(screen.getByText('Nothing posted yet.')).toBeInTheDocument());
+    expect(screen.getByText('TWITTER_API_KEY')).toBeInTheDocument();
+  });
+
+  it('re-reads when a tweet alert lands', async () => {
+    const engine = fakeEngine({ listHandles: vi.fn(async () => [handle]) });
+    const { rerender } = render(<CallsTab engine={engine} liveToken={1} />);
+    await waitFor(() => expect(engine.listTweets).toHaveBeenCalledTimes(1));
+    rerender(<CallsTab engine={engine} liveToken={2} />);
+    await waitFor(() => expect(engine.listTweets).toHaveBeenCalledTimes(2));
+  });
+
+  it('surfaces why the engine refused a handle', async () => {
+    const engine = fakeEngine({
+      trackHandle: vi.fn(async () => {
+        throw new EngineError('that is not an X handle', 400);
+      }),
+    });
+    render(<CallsTab engine={engine} />);
+    await waitFor(() => expect(engine.listHandles).toHaveBeenCalled());
+
+    fireEvent.change(screen.getByLabelText('X handle'), { target: { value: 'nope nope' } });
+    fireEvent.click(screen.getByText('Follow'));
+    await waitFor(() => expect(screen.getByText('that is not an X handle')).toBeInTheDocument());
   });
 });
 

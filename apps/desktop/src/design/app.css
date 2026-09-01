@@ -352,6 +352,12 @@
   color: var(--phosphor);
   border-color: var(--phosphor-dim);
 }
+/* A post is neither a gain nor a loss, so it stays out of the money colours
+   and out of the phosphor a coin call uses. */
+.tick-kind[data-kind='tweet'] {
+  color: var(--dim);
+  border-color: var(--rule-bright);
+}
 .tick-what {
   color: var(--text-bright);
   overflow: hidden;
@@ -651,4 +657,91 @@ a.btn {
 }
 .link-btn:hover {
   color: var(--phosphor);
+}
+
+/* ---------- Calls: tracked handles and tweet cards ---------- */
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s2);
+  margin-bottom: var(--s5);
+}
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s1);
+  padding: var(--s1) var(--s2);
+  border: 1px solid var(--rule-bright);
+  border-radius: var(--radius);
+  color: var(--dim);
+  font-size: 11px;
+}
+.chip-x {
+  font: inherit;
+  background: none;
+  border: 0;
+  padding: 0 2px;
+  color: var(--dimmer);
+  cursor: pointer;
+  line-height: 1;
+}
+.chip-x:hover {
+  color: var(--loss);
+}
+
+/*
+ * A readable column, not the full width.
+ *
+ * A tweet is prose, and prose set across 900px is hard to track from the end
+ * of one line to the start of the next.
+ */
+.tweets {
+  display: grid;
+  gap: var(--s3);
+  max-width: 620px;
+}
+.tweet {
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  background: var(--panel);
+  padding: var(--s3) var(--s4);
+}
+.tweet-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  margin-bottom: var(--s2);
+}
+.tweet-age {
+  margin-left: auto;
+  color: var(--dimmer);
+  font-size: 11px;
+  white-space: nowrap;
+}
+.tweet-text {
+  margin: 0 0 var(--s2);
+  /* A tweet's own line breaks carry its meaning; wrap long links rather than
+     letting one push the card sideways. */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--text-bright);
+}
+.tweet-media {
+  display: block;
+  width: 100%;
+  border-radius: var(--radius);
+  margin-bottom: var(--s2);
+}
+.tweet-foot {
+  display: flex;
+  gap: var(--s3);
+  align-items: center;
+  color: var(--dimmer);
+  font-size: 11px;
+}
+.tweet .avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
 }

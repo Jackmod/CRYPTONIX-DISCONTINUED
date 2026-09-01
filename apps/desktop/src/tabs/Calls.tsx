@@ -1,14 +1,141 @@
+import { useCallback, useEffect, useState } from 'react';
+import type { EngineClient, StoredTweet, TrackedHandle } from '../api/client';
+import { ExternalLink } from '../components/ExternalLink';
+import { Identicon } from '../components/Identicon';
+
+/** How long ago, in the shortest form that is still true. */
+function timeAgo(iso: string, now: number): string {
+  const minutes = Math.floor((now - new Date(iso).getTime()) / 60_000);
+  if (!Number.isFinite(minutes) || minutes < 0) return '';
+  if (minutes < 1) return 'just now';
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h`;
+  return `${Math.floor(hours / 24)}d`;
+}
+
 /**
- * Tracked handles and streaming tweet embeds (spec §5.3).
+ * An author's real avatar, falling back to a generated mark.
  *
- * The Twitter monitor is the one part of Phase 3 that cannot be built without
- * a decision only the project owner can make: every provider requires a paid
- * account, so there is no keyless option (see the Phase 3 data-source spike).
- *
- * This says so plainly rather than showing an invented feed. A screen that
- * fakes data it does not have is worse than one that explains what it needs.
+ * Spec §5.3 wants the real picture wherever one exists. An avatar URL can rot
+ * — accounts change them and X expires the old file — so a broken image is a
+ * real case, not a theoretical one.
  */
-export function CallsTab() {
+function Avatar({ tweet }: { tweet: StoredTweet }) {
+  const [failed, setFailed] = useState(false);
+
+  if (!tweet.authorAvatarUrl || failed) return <Identicon address={tweet.handle} size={32} />;
+
+  return (
+    <img
+      className="avatar"
+      src={tweet.authorAvatarUrl}
+      alt={`${tweet.authorName} avatar`}
+      width={32}
+      height={32}
+      loading="lazy"
+      onError={() => setFailed(true)}
+    />
+  );
+}
+
+function TweetCard({ tweet, now }: { tweet: StoredTweet; now: number }) {
+  const [imageFailed, setImageFailed] = useState(false);
+  const image = tweet.media.find((m) => m.type === 'photo' || m.type === 'animated_gif');
+
+  return (
+    <article className="tweet">
+      <div className="tweet-head">
+        <Avatar tweet={tweet} />
+        <div style={{ minWidth: 0 }}>
+          <div className="ident-name">{tweet.authorName}</div>
+          <div className="ident-sub">@{tweet.handle}</div>
+        </div>
+        <time className="tweet-age" dateTime={tweet.postedAt} title={new Date(tweet.postedAt).toLocaleString()}>
+          {timeAgo(tweet.postedAt, now)}
+        </time>
+      </div>
+
+      {/* Whitespace preserved: a tweet's line breaks carry its meaning. */}
+      <p className="tweet-text">{tweet.text}</p>
+
+      {image && !imageFailed && (
+        <img className="tweet-media" src={image.url} alt="" loading="lazy" onError={() => setImageFailed(true)} />
+      )}
+
+      <div className="tweet-foot">
+        {tweet.likeCount !== null && <span>{tweet.likeCount.toLocaleString()} likes</span>}
+        {tweet.replyCount !== null && <span>{tweet.replyCount.toLocaleString()} replies</span>}
+        <ExternalLink href={tweet.url}>View on X</ExternalLink>
+      </div>
+    </article>
+  );
+}
+
+/**
+ * Tracked handles and their tweets (spec §5.3).
+ *
+ * Everything here except discovery works without a key: the cards render from
+ * what the engine has stored, and adding or removing a handle is a plain
+ * write. What needs `TWITTER_API_KEY` is the engine finding out that a handle
+ * has posted — X's free tier is write-only, and Nitter was taken down in
+ * August 2026 — so without one this fills up only as far as history goes.
+ */
+export function CallsTab({ engine, liveToken = 0 }: { engine: EngineClient; liveToken?: number }) {
+  const [handles, setHandles] = useState<TrackedHandle[] | null>(null);
+  const [tweets, setTweets] = useState<StoredTweet[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [input, setInput] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [reloadToken, setReloadToken] = useState(0);
+
+  const reload = useCallback(() => setReloadToken((n) => n + 1), []);
+
+  useEffect(() => {
+    let cancelled = false;
+    Promise.all([engine.listHandles(), engine.listTweets(100)])
+      .then(([h, t]) => {
+        if (cancelled) return;
+        setHandles(h);
+        setTweets(t);
+        setError(null);
+      })
+      .catch((err) => !cancelled && setError((err as Error).message));
+    return () => {
+      cancelled = true;
+    };
+    // liveToken: a tweet alert arrives on the same socket as everything else,
+    // and a feed that never refreshes goes stale while it is open.
+  }, [engine, reloadToken, liveToken]);
+
+  const add = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setError(null);
+    setBusy(true);
+    try {
+      await engine.trackHandle(input.trim());
+      setInput('');
+      reload();
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const remove = async (handle: TrackedHandle) => {
+    setError(null);
+    try {
+      await engine.untrackHandle(handle.id);
+      reload();
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  };
+
+  // Fixed per render, so every card's age is measured from one instant.
+  const now = Date.now();
+
   return (
     <>
       <div className="view-head">
@@ -16,18 +143,61 @@ export function CallsTab() {
         <span className="view-sub">tweets from tracked accounts</span>
       </div>
 
-      <div className="empty">
-        <div className="empty-title">Twitter tracking needs a provider first.</div>
-        <p style={{ margin: '0 0 var(--s3)' }}>
-          Reading tweets has no free tier. The recommendation is <code>TwitterAPI.io</code> — already named in the
-          design spec, roughly $0.15 per 1,000 tweets, and a $1 trial that needs no card, which covers far more than
-          setting this up will use.
-        </p>
-        <p style={{ margin: 0 }}>
-          The comparison and reasoning are in{' '}
-          <code>docs/superpowers/specs/2026-09-01-phase-3-data-sources-spike.md</code>. Once a key exists, this tab
-          shows tracked handles and their tweets, and tweet alerts join the live feed on the right.
-        </p>
+      {error && <div className="banner">{error}</div>}
+
+      <form onSubmit={add} style={{ display: 'flex', gap: 'var(--s2)', marginBottom: 'var(--s4)' }}>
+        <input
+          className="input"
+          style={{ flex: '1 1 260px', maxWidth: 340 }}
+          placeholder="@handle, or a link to the profile"
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          aria-label="X handle"
+          required
+        />
+        <button className="btn btn-primary" disabled={busy || input.trim() === ''}>
+          {busy ? 'Adding…' : 'Follow'}
+        </button>
+      </form>
+
+      {handles && handles.length > 0 && (
+        <div className="chips">
+          {handles.map((handle) => (
+            <span className="chip" key={handle.id}>
+              @{handle.handle}
+              <button
+                className="chip-x"
+                onClick={() => remove(handle)}
+                aria-label={`Stop following @${handle.handle}`}
+              >
+                ×
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
+
+      {handles !== null && handles.length === 0 && !error && (
+        <div className="empty">
+          <div className="empty-title">No accounts followed yet.</div>
+          Add one above, or run <code>/track twitter</code> from Discord — both write to the same list.
+        </div>
+      )}
+
+      {tweets !== null && tweets.length === 0 && handles !== null && handles.length > 0 && (
+        <div className="empty">
+          <div className="empty-title">Nothing posted yet.</div>
+          Tweets appear here once the engine finds them. That needs{' '}
+          <code>TWITTER_API_KEY</code> set — finding out an account has posted is the one part of
+          Cryptonix with no free option, since X's free tier is write-only and Nitter was taken down
+          in August 2026. Rendering costs nothing, so everything else on this screen already works.
+        </div>
+      )}
+
+      <div className="tweets">
+        {(tweets ?? []).map((tweet) => (
+          <TweetCard key={tweet.id} tweet={tweet} now={now} />
+        ))}
       </div>
     </>
   );

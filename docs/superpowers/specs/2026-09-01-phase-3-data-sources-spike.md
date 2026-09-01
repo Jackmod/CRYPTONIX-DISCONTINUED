@@ -164,3 +164,47 @@ trades is a meaningfully different claim from 55% on six.
   — provider comparison.
 - [TwitterAPI.io cost breakdown](https://twitterapi.io/blog/x-api-cost-breakdown-2026)
   — trial credit and per-tweet pricing.
+
+## 5. Re-checked 2026-09-01: the free routes are gone, and rendering is free
+
+Revisited when asked whether Twitter could be scraped without cost. The
+landscape moved after this spike was written.
+
+**Discovery — no dependable free option.**
+
+- X Corp sent cease-and-desist letters on **2026-08-24** demanding Nitter
+  instances be taken down; the project's repository is archived and read-only.
+- Tried directly: `xcancel.com/<user>/rss` answered 302, `rsshub.app` answered
+  302 into Cloudflare, `rss.gurify.com` was alive at the root but its feed
+  paths 404'd.
+- The RSS converters still being recommended are third parties running the
+  same scraping, inheriting the same fragility and the same legal pressure.
+- Self-hosting now requires supplying your own X session tokens, which is how
+  the account gets suspended — and the archived repo will not be maintained
+  against X's next change.
+
+**Rendering — free, and verified.** `cdn.syndication.twimg.com/tweet-result`,
+the endpoint behind every embedded tweet on the web, answered 200 with the
+full tweet: author name, handle, real avatar, text, media, timestamp, like and
+reply counts. Measured behaviour, all of it handled in
+`apps/engine/src/twitter/syndication.ts`:
+
+- `token` is required but its value is arbitrary. **Omitting it returns HTTP
+  200 with a body of `{}`** — a success status carrying no data, which is the
+  trap worth knowing about.
+- A missing tweet answers 404 in HTML, not JSON. A non-numeric id answers 400.
+- Twenty rapid requests drew no rate limiting.
+- Text arrives **HTML-escaped** (`&lt;iframe&gt;`), which has to be decoded
+  before it reaches a surface that renders text rather than markup.
+
+**Cost, corrected.** TwitterAPI.io bills $0.00015 per tweet returned *with a
+floor of $0.00015 per call*, so polling dominates: 20 handles every minute is
+about $130/month while the tweets are under a dollar. They also expose webhook
+filter rules (`from:a OR from:b`, 255 characters per rule, interval down to
+sub-second) which push rather than poll and bill nothing for silence. That is
+the shape to use beyond a handful of handles.
+
+**Genuinely free alternatives**, if the goal is "know when a caller shills
+something" rather than "read X specifically": Telegram's Bot API and Bluesky's
+public API both cost nothing and need no scraping. Discovery is behind the
+`TweetSource` interface precisely so either can be dropped in.

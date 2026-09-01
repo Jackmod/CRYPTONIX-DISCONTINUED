@@ -2,6 +2,7 @@ import type { AlertEvent } from '../engine/alert-stream.js';
 import type { GuildConfigCache } from './config-cache.js';
 import { buildWalletTradeMessage, isWalletAlertPayload } from '../embeds/wallet-buy.js';
 import { buildNewCoinMessage, isNewCoinAlertPayload } from '../embeds/new-coin.js';
+import { buildTweetMessage, isTweetAlertPayload } from '../embeds/tweet.js';
 
 export interface FanOutResult {
   /** Guilds that had a configured channel to try. */
@@ -28,6 +29,14 @@ function renderAlert(alert: AlertEvent): { embeds: unknown[]; components: unknow
     return buildNewCoinMessage(alert.payload);
   }
 
+  if (alert.type === 'tweet') {
+    if (!isTweetAlertPayload(alert.payload)) {
+      console.error(`alert ${alert.id} has an unexpected tweet payload shape; skipping`);
+      return null;
+    }
+    return buildTweetMessage(alert.payload);
+  }
+
   return null;
 }
 
@@ -36,9 +45,8 @@ export async function fanOutAlert(
   cache: Pick<GuildConfigCache, 'entries'>,
   sendToChannel: (channelId: string, message: unknown) => Promise<void>
 ): Promise<FanOutResult> {
-  // One renderer per alert type. Anything unrecognised — a tweet alert, once
-  // that half of Phase 3 lands — is skipped quietly rather than rendered as
-  // something it is not.
+  // One renderer per alert type. Anything unrecognised is skipped quietly
+  // rather than rendered as something it is not.
   const message = renderAlert(alert);
   if (message === null) return { attempted: 0, delivered: 0 };
 

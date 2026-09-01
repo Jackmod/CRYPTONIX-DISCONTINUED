@@ -83,6 +83,22 @@ export const env = {
     minTrades5m: numberOr('COIN_MIN_TRADES_5M'),
     minLiquidityUsd: numberOr('COIN_MIN_LIQUIDITY_USD'),
   },
+
+  /**
+   * Twitter monitoring. Off unless a key is present.
+   *
+   * Discovery is the one part of this project that cannot be done for free:
+   * X's free API tier is write-only, and Nitter was served cease-and-desist
+   * letters on 2026-08-24 and archived. Rendering a tweet stays free either
+   * way (see src/twitter/syndication.ts), so the Calls tab and the embeds work
+   * without this — they just have nothing new to show.
+   */
+  twitterApiKey: process.env.TWITTER_API_KEY ?? '',
+  // Floored like the coin scanner, and for a sharper reason: this provider
+  // charges a floor fee PER CALL whether or not a tweet comes back, so a
+  // mistyped interval is billable. One minute across all handles is cheap;
+  // one second is not.
+  tweetPollIntervalMs: Math.max(30_000, numberOr('TWEET_POLL_INTERVAL_MS') ?? 120_000),
 };
 
 // Helius must be able to POST to WEBHOOK_BASE_URL from the public internet.

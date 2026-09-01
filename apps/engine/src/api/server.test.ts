@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import request from 'supertest';
-import { createDb } from '@cryptonix/db';
+import { createDb, alerts, tweets } from '@cryptonix/db';
 import { createServer } from './server';
 import { WalletMonitor } from '../monitors/wallet-monitor';
 import { PnlTracker } from '../monitors/pnl-tracker';
@@ -35,7 +35,9 @@ function api(app: Parameters<typeof request>[0]) {
 
 describe('engine API', () => {
   beforeEach(async () => {
-    await db.execute('TRUNCATE alerts, pnl_daily, wallet_trades, wallets, discord_guilds, client_state RESTART IDENTITY CASCADE');
+    await db.execute(
+      'TRUNCATE alerts, pnl_daily, wallet_trades, wallets, discord_guilds, client_state, tweets, tracked_handles RESTART IDENTITY CASCADE'
+    );
   });
 
   /** Like buildApp, but exposes the mocks so a test can assert on Helius calls. */
@@ -719,6 +721,109 @@ describe('engine API', () => {
     expect(head.body.id).toBe(Math.max(...all.body.map((a: { id: number }) => a.id)));
     // Resuming from the head yields nothing, which is the whole point.
     expect((await api(app).get(`/alerts?since=${head.body.id}`)).body).toHaveLength(0);
+  });
+
+  it('POST /handles accepts what a person actually pastes', async () => {
+    const app = buildApp();
+    for (const [input, stored] of [
+      ['ansem', 'ansem'],
+      ['@cobie', 'cobie'],
+      ['https://x.com/gainzy222', 'gainzy222'],
+    ]) {
+      const res = await api(app).post('/handles').send({ handle: input });
+      expect(res.status, `${input} should be accepted`).toBe(201);
+      expect(res.body.handle).toBe(stored);
+    }
+  });
+
+  it('POST /handles treats different casings as one account', async () => {
+    // Otherwise the same account is polled twice and every tweet posted twice.
+    const app = buildApp();
+    expect((await api(app).post('/handles').send({ handle: 'Ansem' })).status).toBe(201);
+    expect((await api(app).post('/handles').send({ handle: '@ansem' })).status).toBe(409);
+    expect((await api(app).get('/handles')).body).toHaveLength(1);
+  });
+
+  it('POST /handles refuses something that is not a handle', async () => {
+    const app = buildApp();
+    for (const handle of ['', '   ', 'a'.repeat(16), 'has space', 42, null, 'https://example.com/x']) {
+      const res = await api(app).post('/handles').send({ handle });
+      expect(res.status, `${JSON.stringify(handle)} must be rejected`).toBe(400);
+    }
+  });
+
+  it('GET /handles lists them alphabetically', async () => {
+    const app = buildApp();
+    for (const handle of ['zeta', 'alpha']) await api(app).post('/handles').send({ handle });
+    expect((await api(app).get('/handles')).body.map((h: { handle: string }) => h.handle)).toEqual([
+      'alpha',
+      'zeta',
+    ]);
+  });
+
+  it('DELETE /handles/:id removes the handle, its tweets and its alerts', async () => {
+    // A leftover alert would let the bot replay tweets from an account nobody
+    // follows any more.
+    const app = buildApp();
+    const created = await api(app).post('/handles').send({ handle: 'ansem' });
+
+    await db.insert(tweets).values({
+      id: '5',
+      handle: 'ansem',
+      authorName: 'Ansem',
+      text: 'gm',
+      url: 'https://x.com/ansem/status/5',
+      postedAt: new Date(),
+    });
+    await db
+      .insert(alerts)
+      .values({ type: 'tweet', refId: 0, payload: { authorHandle: 'ansem', tweetId: '5' } });
+
+    expect((await api(app).delete(`/handles/${created.body.id}`)).status).toBe(204);
+    expect((await api(app).get('/handles')).body).toEqual([]);
+    expect((await api(app).get('/tweets')).body).toEqual([]);
+    expect((await db.select().from(alerts)).length).toBe(0);
+  });
+
+  it('DELETE /handles/:id leaves another handle alerts alone', async () => {
+    const app = buildApp();
+    const ansem = await api(app).post('/handles').send({ handle: 'ansem' });
+    await api(app).post('/handles').send({ handle: 'cobie' });
+    await db
+      .insert(alerts)
+      .values({ type: 'tweet', refId: 0, payload: { authorHandle: 'cobie', tweetId: '9' } });
+
+    await api(app).delete(`/handles/${ansem.body.id}`);
+    expect((await db.select().from(alerts)).length).toBe(1);
+  });
+
+  it('DELETE /handles/:id answers 404 for one that is not there', async () => {
+    const app = buildApp();
+    expect((await api(app).delete('/handles/9999')).status).toBe(404);
+  });
+
+  it('GET /tweets returns the newest first', async () => {
+    const app = buildApp();
+    await db.insert(tweets).values([
+      { id: '1', handle: 'a', authorName: 'A', text: 'old', url: 'u', postedAt: new Date('2026-08-01') },
+      { id: '2', handle: 'a', authorName: 'A', text: 'new', url: 'u', postedAt: new Date('2026-09-01') },
+    ]);
+    expect((await api(app).get('/tweets')).body.map((t: { id: string }) => t.id)).toEqual(['2', '1']);
+  });
+
+  it('GET /tweets rejects a nonsense limit and caps a huge one', async () => {
+    const app = buildApp();
+    expect((await api(app).get('/tweets?limit=abc')).status).toBe(400);
+    expect((await api(app).get('/tweets?limit=0')).status).toBe(400);
+    expect((await api(app).get('/tweets?limit=100000')).status).toBe(200);
+  });
+
+  it('the handle and tweet routes need the api key like everything else', async () => {
+    const app = buildApp();
+    expect((await request(app).get('/handles')).status).toBe(401);
+    expect((await request(app).post('/handles').send({ handle: 'x' })).status).toBe(401);
+    expect((await request(app).delete('/handles/1')).status).toBe(401);
+    expect((await request(app).get('/tweets')).status).toBe(401);
   });
 
   it('answers a browser preflight without demanding the api key', async () => {

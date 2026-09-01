@@ -27,11 +27,16 @@ function fakeInteraction(guildId: string | null = 'g1') {
   };
 }
 
-function fakeAutocomplete(focused: string) {
+function fakeAutocomplete(focused: string, subcommand = 'wallet') {
   const respond = vi.fn().mockResolvedValue(undefined);
   return {
     respond,
-    interaction: { options: { getFocused: () => focused }, respond } as never,
+    // /untrack branches on its subcommand before suggesting anything, so the
+    // fake has to answer that too.
+    interaction: {
+      options: { getFocused: () => focused, getSubcommand: () => subcommand },
+      respond,
+    } as never,
   };
 }
 

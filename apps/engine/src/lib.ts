@@ -15,3 +15,7 @@ export { RateLimiter } from './helius/rate-limiter.js';
 export { isValidSolanaAddress } from './solana/address.js';
 export { DexScreenerClient } from './coins/dexscreener.js';
 export { CoinScanner, type NewCoinAlertPayload } from './monitors/coin-scanner.js';
+export { SyndicationClient, SyndicationError } from './twitter/syndication.js';
+export { TwitterApiIoSource, TweetSourceError } from './twitter/twitterapi-io.js';
+export { isNewerTweetId, type TweetSource } from './twitter/source.js';
+export { TweetMonitor, type TweetAlertPayload } from './monitors/tweet-monitor.js';

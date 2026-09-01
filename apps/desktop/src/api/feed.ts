@@ -1,7 +1,7 @@
 /** One entry in the live rail, already normalised for rendering. */
 export interface FeedItem {
   id: number;
-  kind: 'buy' | 'sell' | 'coin' | 'other';
+  kind: 'buy' | 'sell' | 'coin' | 'tweet' | 'other';
   /** The headline: a wallet label, or a coin symbol. */
   what: string;
   detail: string;
@@ -22,6 +22,14 @@ interface WalletPayload {
   axiomLink?: unknown;
 }
 
+interface TweetPayload {
+  authorHandle?: unknown;
+  authorName?: unknown;
+  authorAvatarUrl?: unknown;
+  text?: unknown;
+  url?: unknown;
+}
+
 interface CoinPayload {
   symbol?: unknown;
   mint?: unknown;
@@ -38,6 +46,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function shortMint(mint: string): string {
   return mint.length <= 10 ? mint : `${mint.slice(0, 4)}…${mint.slice(-4)}`;
+}
+
+/** Whitespace flattened, so one entry cannot take five lines of the rail. */
+function oneLine(text: string): string {
+  return text.replace(/\s+/g, ' ').trim();
 }
 
 function compactUsd(value: number): string {
@@ -76,6 +89,23 @@ export function toFeedItem(alert: { id: number; type: string; payload: unknown; 
       // component, not fetched.
       imageUrl: null,
       link: typeof p.axiomLink === 'string' ? p.axiomLink : null,
+      at,
+    };
+  }
+
+  if (alert.type === 'tweet') {
+    const p = alert.payload as TweetPayload;
+    if (typeof p.authorHandle !== 'string' || typeof p.text !== 'string') return null;
+    return {
+      id: alert.id,
+      kind: 'tweet',
+      what: `@${p.authorHandle}`,
+      // Collapsed to one line: the rail is a ticker, and a tweet's own line
+      // breaks would give one entry the height of five.
+      detail: oneLine(p.text),
+      // The author's real avatar (spec §5.3), when the alert carried one.
+      imageUrl: typeof p.authorAvatarUrl === 'string' ? p.authorAvatarUrl : null,
+      link: typeof p.url === 'string' ? p.url : null,
       at,
     };
   }

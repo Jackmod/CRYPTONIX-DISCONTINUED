@@ -44,8 +44,50 @@ describe('toFeedItem', () => {
     expect(result!.imageUrl).toBe('https://cdn/p.png');
   });
 
+  it('renders a tweet alert, which the rail interleaves with the rest (spec §5.3)', () => {
+    const result = toFeedItem({
+      id: 11,
+      type: 'tweet',
+      ts: TS,
+      payload: {
+        authorHandle: 'ansem',
+        authorName: 'Ansem',
+        authorAvatarUrl: 'https://pbs.twimg.com/a.jpg',
+        text: 'sending it',
+        url: 'https://x.com/ansem/status/5',
+      },
+    });
+
+    expect(result).toMatchObject({
+      id: 11,
+      kind: 'tweet',
+      what: '@ansem',
+      detail: 'sending it',
+      imageUrl: 'https://pbs.twimg.com/a.jpg',
+      link: 'https://x.com/ansem/status/5',
+    });
+  });
+
+  it('flattens a tweet onto one line, so one entry cannot take five', () => {
+    const result = toFeedItem({
+      id: 1,
+      type: 'tweet',
+      // A real tweet's own line breaks, which the rail must not inherit.
+      payload: { authorHandle: 'a', text: `one${'\n\n'}two   three${'\n'}` },
+    });
+    expect(result!.detail).toBe('one two three');
+  });
+
+  it('renders a tweet with no avatar', () => {
+    const result = toFeedItem({ id: 1, type: 'tweet', payload: { authorHandle: 'a', text: 'hi' } });
+    expect(result!.imageUrl).toBeNull();
+    expect(result!.link).toBeNull();
+  });
+
   it.each([
-    ['an unknown type', { id: 1, type: 'tweet', payload: { text: 'hi' } }],
+    ['an unknown type', { id: 1, type: 'shrug', payload: { text: 'hi' } }],
+    ['a tweet with no handle', { id: 1, type: 'tweet', payload: { text: 'hi' } }],
+    ['a tweet with no text', { id: 1, type: 'tweet', payload: { authorHandle: 'a' } }],
     ['a non-object payload', { id: 1, type: 'wallet_buy', payload: 'nope' }],
     ['a null payload', { id: 1, type: 'wallet_buy', payload: null }],
     ['a wallet alert with no label', { id: 1, type: 'wallet_buy', payload: { mint: 'm' } }],

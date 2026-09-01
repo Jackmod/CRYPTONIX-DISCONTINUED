@@ -41,6 +41,27 @@ export interface Coin {
   firstSeenAt: string;
 }
 
+/** An X account being followed. Mirrors the engine's tracked_handles row. */
+export interface TrackedHandle {
+  id: number;
+  handle: string;
+  lastTweetId: string | null;
+  addedAt: string;
+}
+
+export interface StoredTweet {
+  id: string;
+  handle: string;
+  authorName: string;
+  authorAvatarUrl: string | null;
+  text: string;
+  media: { type: string; url: string }[];
+  url: string;
+  likeCount: number | null;
+  replyCount: number | null;
+  postedAt: string;
+}
+
 export interface AlertRecord {
   id: number;
   type: string;
@@ -115,6 +136,28 @@ export class EngineClient {
   async getBalance(walletId: number): Promise<number> {
     const body = await this.json<{ sol?: number }>(`/wallets/${walletId}/balance`);
     return typeof body.sol === 'number' ? body.sol : 0;
+  }
+
+  listHandles(): Promise<TrackedHandle[]> {
+    return this.json('/handles');
+  }
+
+  async trackHandle(handle: string): Promise<TrackedHandle> {
+    const res = await this.request('/handles', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ handle }),
+    });
+    return res.json() as Promise<TrackedHandle>;
+  }
+
+  async untrackHandle(id: number): Promise<void> {
+    const res = await this.request(`/handles/${id}`, { method: 'DELETE' });
+    await res.body?.cancel().catch(() => {});
+  }
+
+  listTweets(limit = 50): Promise<StoredTweet[]> {
+    return this.json(`/tweets?limit=${encodeURIComponent(String(limit))}`);
   }
 
   listCoins(limit = 50): Promise<Coin[]> {

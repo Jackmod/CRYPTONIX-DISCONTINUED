@@ -2,8 +2,18 @@ import express, { type Express, type NextFunction, type Request, type Response }
 import { timingSafeEqual } from 'node:crypto';
 import { and, desc, eq, gt, sql } from 'drizzle-orm';
 import type { Db } from '@cryptonix/db';
-import { wallets, walletTrades, pnlDaily, discordGuilds, alerts, clientState, scannedCoins } from '@cryptonix/db';
-import type { HeliusEnhancedTransaction } from '@cryptonix/core';
+import {
+  wallets,
+  walletTrades,
+  pnlDaily,
+  discordGuilds,
+  alerts,
+  clientState,
+  scannedCoins,
+  trackedHandles,
+  tweets,
+} from '@cryptonix/db';
+import { normalizeHandle, type HeliusEnhancedTransaction } from '@cryptonix/core';
 import type { WalletMonitor } from '../monitors/wallet-monitor.js';
 import type { PnlTracker } from '../monitors/pnl-tracker.js';
 import type { AlertBus } from './alert-bus.js';
@@ -22,6 +32,8 @@ const MAX_ALERT_REPLAY = 50;
  * only waste a round trip.
  */
 const MAX_RECENT_ALERTS = 200;
+/** The Calls tab is a feed, not an archive. */
+const MAX_RECENT_TWEETS = 200;
 const MAX_STATE_VALUE_LENGTH = 1_000;
 const MAX_COIN_PAGE = 200;
 /**
@@ -449,6 +461,108 @@ export function createServer(
    * replaying history. It cannot be derived from GET /alerts: that returns an
    * ascending, capped page, so asking with since=0 yields the OLDEST rows.
    */
+  /**
+   * X accounts being followed.
+   *
+   * Shared exactly like the wallet list: `/track twitter` in Discord and the
+   * app's Calls tab write the same rows, so neither has anything to sync.
+   */
+  app.get(
+    '/handles',
+    asyncRoute(async (_req, res) => {
+      res.json(await db.select().from(trackedHandles).orderBy(trackedHandles.handle));
+    })
+  );
+
+  app.post(
+    '/handles',
+    asyncRoute(async (req, res) => {
+      const { handle } = (req.body ?? {}) as { handle?: unknown };
+      if (typeof handle !== 'string') {
+        res.status(400).json({ error: 'handle is required, and must be a string' });
+        return;
+      }
+
+      // Accepts '@ansem', 'ansem' or a pasted profile URL, and lowercases —
+      // otherwise 'Ansem' and 'ansem' become two rows polling one account and
+      // every tweet from it is posted twice.
+      const normalized = normalizeHandle(handle);
+      if (normalized === null) {
+        res.status(400).json({ error: 'that is not an X handle' });
+        return;
+      }
+
+      const [created] = await db
+        .insert(trackedHandles)
+        .values({ handle: normalized })
+        .onConflictDoNothing()
+        .returning();
+
+      if (!created) {
+        const [existing] = await db
+          .select()
+          .from(trackedHandles)
+          .where(eq(trackedHandles.handle, normalized));
+        res.status(409).json({ error: 'that handle is already tracked', handle: existing });
+        return;
+      }
+
+      res.status(201).json(created);
+    })
+  );
+
+  app.delete(
+    '/handles/:id',
+    asyncRoute(async (req, res) => {
+      const id = Number(req.params.id);
+      if (!Number.isInteger(id) || id < 1) {
+        res.status(400).json({ error: 'handle id must be a positive integer' });
+        return;
+      }
+
+      const [removed] = await db.delete(trackedHandles).where(eq(trackedHandles.id, id)).returning();
+      if (!removed) {
+        res.status(404).json({ error: 'handle not found' });
+        return;
+      }
+
+      // Its tweets and its alerts go too. Leaving the alerts behind would let
+      // the bot's replay post tweets from an account nobody follows any more —
+      // the same reason untracking a wallet clears its alerts.
+      await db.delete(tweets).where(eq(tweets.handle, removed.handle));
+      await db.delete(alerts).where(
+        sql`${alerts.type} = 'tweet' AND ${alerts.payload}->>'authorHandle' = ${removed.handle}`
+      );
+
+      res.status(204).end();
+    })
+  );
+
+  /** Recent tweets, newest first — the Calls tab's feed. */
+  app.get(
+    '/tweets',
+    asyncRoute(async (req, res) => {
+      const limitRaw = req.query.limit === undefined ? '50' : req.query.limit;
+      if (typeof limitRaw !== 'string') {
+        res.status(400).json({ error: 'limit must be a single integer' });
+        return;
+      }
+      const limit = Number(limitRaw);
+      if (!Number.isInteger(limit) || limit < 1) {
+        res.status(400).json({ error: 'limit must be a positive integer' });
+        return;
+      }
+
+      res.json(
+        await db
+          .select()
+          .from(tweets)
+          .orderBy(desc(tweets.postedAt))
+          .limit(Math.min(limit, MAX_RECENT_TWEETS))
+      );
+    })
+  );
+
   /**
    * Coins the scanner has alerted, strongest first.
    *

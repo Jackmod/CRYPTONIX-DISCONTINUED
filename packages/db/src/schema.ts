@@ -87,3 +87,50 @@ export const scannedCoins = pgTable('scanned_coins', {
   firstSeenAt: timestamp('first_seen_at').notNull().defaultNow(),
   lastCheckedAt: timestamp('last_checked_at').notNull().defaultNow(),
 });
+
+/**
+ * X accounts the user asked to follow.
+ *
+ * The handle is the key rather than an X user id, because a person types a
+ * handle and that is what the discovery API is asked for. Stored lowercased
+ * and without the '@' (see normalizeHandle in @cryptonix/core), so 'Ansem',
+ * '@ansem' and 'x.com/ansem' cannot become three rows polling one account and
+ * posting every tweet three times.
+ *
+ * `lastTweetId` is the watermark: tweets at or below it have already been
+ * seen. It is a text column because a tweet id is a 64-bit snowflake, and
+ * storing it as a number would silently corrupt the last digits.
+ */
+export const trackedHandles = pgTable('tracked_handles', {
+  id: serial('id').primaryKey(),
+  handle: text('handle').notNull().unique(),
+  lastTweetId: text('last_tweet_id'),
+  addedAt: timestamp('added_at').notNull().defaultNow(),
+});
+
+/**
+ * Tweets already seen, so the same one is never alerted twice.
+ *
+ * Keyed by the tweet id for the same reason scanned_coins is keyed by mint: a
+ * poll returns the same recent tweets over and over, and an in-memory set
+ * would forget them on restart and re-post the lot.
+ *
+ * `alerted` exists so the first poll of a newly tracked handle can record its
+ * recent tweets — the Calls tab shows them immediately — WITHOUT firing a
+ * burst of alerts into every configured Discord channel for things that were
+ * posted before anyone asked to follow the account.
+ */
+export const tweets = pgTable('tweets', {
+  id: text('id').primaryKey(),
+  handle: text('handle').notNull(),
+  authorName: text('author_name').notNull(),
+  authorAvatarUrl: text('author_avatar_url'),
+  text: text('text').notNull(),
+  media: jsonb('media').notNull().default([]),
+  url: text('url').notNull(),
+  likeCount: integer('like_count'),
+  replyCount: integer('reply_count'),
+  alerted: boolean('alerted').notNull().default(false),
+  postedAt: timestamp('posted_at').notNull(),
+  seenAt: timestamp('seen_at').notNull().defaultNow(),
+});

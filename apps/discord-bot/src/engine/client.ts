@@ -18,6 +18,14 @@ export interface AlertRecord {
   ts: string;
 }
 
+/** An X account being followed. Mirrors apps/engine's tracked_handles row. */
+export interface TrackedHandle {
+  id: number;
+  handle: string;
+  lastTweetId: string | null;
+  addedAt: string;
+}
+
 export interface GuildConfig {
   guildId: string;
   alertChannelId: string;
@@ -154,6 +162,24 @@ export class EngineClient {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ value }),
     });
+  }
+
+  async listHandles(): Promise<TrackedHandle[]> {
+    const res = await this.request('/handles');
+    return res.json() as Promise<TrackedHandle[]>;
+  }
+
+  async trackHandle(handle: string): Promise<TrackedHandle> {
+    const res = await this.request('/handles', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ handle }),
+    });
+    return res.json() as Promise<TrackedHandle>;
+  }
+
+  async untrackHandle(id: number): Promise<void> {
+    await this.requestDiscardingBody(`/handles/${id}`, { method: 'DELETE' });
   }
 
   async listGuildConfigs(): Promise<GuildConfig[]> {

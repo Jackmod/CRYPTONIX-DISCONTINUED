@@ -8,6 +8,7 @@ const KIND_LABEL: Record<FeedItem['kind'], string> = {
   buy: 'BUY',
   sell: 'SELL',
   coin: 'COIN',
+  tweet: 'POST',
   other: '—',
 };
 
@@ -63,7 +64,9 @@ export function LiveRail({ items }: { items: FeedItem[] }) {
                   <span className="tick-kind" data-kind={item.kind}>
                     {KIND_LABEL[item.kind]}
                   </span>
-                  {item.kind === 'coin' ? (
+                  {item.kind === 'coin' || item.kind === 'tweet' ? (
+                    // Both carry a real picture when one exists, and fall back
+                    // to a generated mark keyed on their own identity.
                     <CoinLogo mint={item.what} symbol={item.what} imageUrl={item.imageUrl} size={16} />
                   ) : (
                     <Identicon address={item.what} size={16} />
@@ -75,7 +78,7 @@ export function LiveRail({ items }: { items: FeedItem[] }) {
                   {item.link && (
                     <>
                       {' · '}
-                      <ExternalLink href={item.link}>Axiom</ExternalLink>
+                      <ExternalLink href={item.link}>{item.kind === 'tweet' ? 'X' : 'Axiom'}</ExternalLink>
                     </>
                   )}
                 </div>

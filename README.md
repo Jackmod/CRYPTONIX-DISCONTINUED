@@ -14,7 +14,7 @@ No trades are ever placed. Cryptonix produces links, never orders.
 |---|---|
 | `apps/engine` | The service. Helius webhooks in, trades and PnL in Postgres, REST + WebSocket out. Optional new-coin scanner. |
 | `apps/discord-bot` | discord.js process. Alerts as embeds, plus `/setup`, `/track`, `/untrack`, `/wallets`, `/pnl`. |
-| `apps/desktop` | Tauri + React desktop app. Wallets, coins, PnL calendar, and a live feed. |
+| `apps/desktop` | Tauri + React desktop app. Wallets, coins, tweet cards, PnL calendar, and a live feed. |
 | `packages/core` | Pure domain logic: Axiom links, swap parsing, FIFO PnL, the heatmap, coin momentum. No I/O. |
 | `packages/db` | Drizzle schema, migrations, and the Postgres client. |
 | `tests/e2e` | A real engine on a real port against real Postgres, with the real bot pipeline wired to it. |
@@ -107,14 +107,20 @@ Then, in any server the bot is in:
 ```
 /setup                                  → alerts go to the channel you ran it in
 /track wallet address:<solana address>  → follow a wallet, and backfill its history
+/track twitter handle:@someone          → follow an X account, and post its tweets here
 /wallets                                → list everything being tracked
 /pnl                                    → realized SOL, win rate, best/worst day, month heatmap
 /untrack wallet address:<address>       → stop following it, and release its Helius webhook
+/untrack twitter handle:@someone        → stop following an account
 ```
 
 Renaming a wallet, or marking one as yours after the fact, is done in the
 desktop app's **Settings** — untracking would delete its trades and PnL and
 cost a fresh Helius backfill to get back.
+
+Following an X account is deliberately quiet: the first poll records that
+account's recent tweets so the Calls tab has something to show, but posts none
+of them. Only what it writes afterwards reaches your channels.
 
 `/pnl` and `/untrack` autocomplete the wallet, so nobody has to retype a
 44-character address. `/pnl` attaches a rendered calendar heatmap; the Unicode
@@ -238,3 +244,36 @@ second and caps how many addresses may hold a webhook, so:
 - Untracking always releases the wallet's webhook, and a failed release leaves
   the wallet retryable rather than leaking a slot.
 - Backfill is capped at 20 pages per wallet.
+
+## Twitter, and the one thing that costs money
+
+Everything in Cryptonix is free to run except **finding out that a tracked X
+account has posted**. Checked on 2026-09-01:
+
+- X's own free API tier is write-only — it cannot read tweets at all.
+- Nitter was served cease-and-desist letters on 2026-08-24 and its repository
+  archived. `xcancel.com`, `rsshub.app` and the other surviving bridges
+  answered 302 or 404 when tried directly.
+- Self-hosting a bridge now requires supplying your own X session tokens,
+  which is how the account gets suspended.
+
+**Rendering a tweet is free and always will be.** X's own embed CDN — the
+endpoint behind every embedded tweet on the web — needs no key and returns the
+author's name, handle, real avatar, text, media and timestamp. That is
+`apps/engine/src/twitter/syndication.ts`, and it is why the Calls tab, the
+Discord tweet card and the alert pipeline all work with no credentials.
+
+Discovery sits alone behind a `TweetSource` interface
+(`apps/engine/src/twitter/source.ts`). The shipped implementation is
+TwitterAPI.io; pointing it at Telegram or Bluesky, both genuinely free, is one
+file and touches nothing else.
+
+Set `TWITTER_API_KEY` to turn discovery on. Without it the engine says so at
+startup and simply never finds new tweets.
+
+**Cost is about polling, not tweets.** The provider charges per tweet returned
+*and* a floor fee per call, so an empty poll still costs. Twenty handles polled
+every minute is roughly $130/month; the tweets themselves are under a dollar.
+`TWEET_POLL_INTERVAL_MS` defaults to two minutes for that reason, and for more
+than a handful of handles their webhook filter rules (`from:a OR from:b`) push
+instead of polling and bill nothing for silence.
