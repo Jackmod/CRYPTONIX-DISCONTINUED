@@ -1115,6 +1115,8 @@ Expected: `Registered 4 slash commands globally and to dev guild …`, then the 
 - [ ] **Step 4: Verify setup and alerts in Discord**
 
 1. Run `/setup` in the channel you want alerts in → `✅ Cryptonix will post alerts to #… in this server.`
+   plus a **sample alert posted to that channel**, labelled as a sample. That is the delivery path
+   proven end to end — permissions, embed, button — before any wallet has traded.
 2. `/track wallet address:<a real Solana address> label:Whale`
 3. Replay a synthetic Helius delivery (see bot v1 plan, Task 11 Step 7) → the embed appears in the channel you chose.
 4. Run `/setup channel:#somewhere-else`, replay again → the embed now arrives in the new channel.

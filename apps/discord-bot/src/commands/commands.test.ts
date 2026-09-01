@@ -143,19 +143,33 @@ describe('/pnl', () => {
   });
 });
 
-function fakeGuildInteraction(options: { channel?: string | null; guildId?: string | null }) {
+function fakeGuildInteraction(options: {
+  channel?: string | null;
+  guildId?: string | null;
+  sendFails?: boolean;
+}) {
   const editReply = vi.fn();
   // /setup now verifies it can actually post in the chosen channel before
   // confirming, so the fixture needs a guild whose channel grants that.
   const permissive = { has: () => true };
+  // /setup posts one sample alert to prove the delivery path, so the fake
+  // channel has to be sendable. `sent` lets a test assert what landed.
+  const sent: unknown[] = [];
   const channel = {
     id: options.channel ?? 'current-channel',
     isTextBased: () => true,
     isThread: () => false,
     permissionsFor: () => permissive,
+    send: options.sendFails
+      ? vi.fn().mockRejectedValue(new Error('slowmode'))
+      : vi.fn(async (m: unknown) => {
+          sent.push(m);
+        }),
   };
   return {
     editReply,
+    sent,
+    channel,
     interaction: {
       guildId: options.guildId === undefined ? 'g1' : options.guildId,
       channelId: 'current-channel',
@@ -194,6 +208,66 @@ describe('/setup', () => {
     await setupCommand.execute(interaction, { engine, guildConfigs: { set: vi.fn() } as any });
 
     expect(engine.setGuildConfig).toHaveBeenCalledWith('g1', 'current-channel', 'user1');
+  });
+
+  it('posts a sample alert, so the delivery path is proven and not just described', async () => {
+    // Every check before this reads a permission bitfield, and a bitfield can
+    // be right while the send still fails — slowmode, automod, an integration
+    // restriction. One real send is the only thing that answers the question.
+    const engine = { setGuildConfig: vi.fn().mockResolvedValue({}) } as any;
+    const { interaction, editReply, sent } = fakeGuildInteraction({ channel: 'chosen' });
+
+    await setupCommand.execute(interaction, { engine, guildConfigs: { set: vi.fn() } as any });
+
+    expect(sent).toHaveLength(1);
+    expect(String(editReply.mock.calls[0][0])).toContain('A sample is there now');
+  });
+
+  it('labels the sample unmistakably, so nobody mistakes it for a real trade', async () => {
+    const engine = { setGuildConfig: vi.fn().mockResolvedValue({}) } as any;
+    const { interaction, sent } = fakeGuildInteraction({ channel: 'chosen' });
+
+    await setupCommand.execute(interaction, { engine, guildConfigs: { set: vi.fn() } as any });
+
+    const message = sent[0] as { content: string; embeds: { toJSON(): { title?: string } }[] };
+    expect(message.content).toContain('Nothing was traded');
+    expect(message.embeds[0].toJSON().title).toContain('Sample');
+  });
+
+  it('builds the sample through the real renderer, button and all', async () => {
+    const engine = { setGuildConfig: vi.fn().mockResolvedValue({}) } as any;
+    const { interaction, sent } = fakeGuildInteraction({ channel: 'chosen' });
+
+    await setupCommand.execute(interaction, { engine, guildConfigs: { set: vi.fn() } as any });
+
+    const message = sent[0] as { components: unknown[] };
+    expect(message.components).toHaveLength(1);
+  });
+
+  it('keeps the setup when only the sample fails, and says which happened', async () => {
+    // Losing a saved configuration because a demonstration failed would be
+    // backwards.
+    const engine = { setGuildConfig: vi.fn().mockResolvedValue({}) } as any;
+    const guildConfigs = { set: vi.fn() } as any;
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { interaction, editReply } = fakeGuildInteraction({ channel: 'chosen', sendFails: true });
+
+    await setupCommand.execute(interaction, { engine, guildConfigs });
+
+    expect(guildConfigs.set).toHaveBeenCalledWith('g1', 'chosen');
+    const reply = String(editReply.mock.calls[0][0]);
+    expect(reply).toContain('Saved, but the sample alert did not send');
+    expect(reply).toContain('slowmode');
+    spy.mockRestore();
+  });
+
+  it('does not post a sample when the engine write failed', async () => {
+    const engine = { setGuildConfig: vi.fn().mockRejectedValue(new EngineError('down', 0)) } as any;
+    const { interaction, sent } = fakeGuildInteraction({ channel: 'chosen' });
+
+    await setupCommand.execute(interaction, { engine, guildConfigs: { set: vi.fn() } as any });
+
+    expect(sent).toHaveLength(0);
   });
 
   it('refuses to run outside a server', async () => {

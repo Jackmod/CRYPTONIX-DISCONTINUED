@@ -1,6 +1,7 @@
 import { ChannelType, InteractionContextType, PermissionFlagsBits, SlashCommandBuilder } from 'discord.js';
 import type { GuildTextBasedChannel } from 'discord.js';
 import { describeError, type BotCommand } from './types.js';
+import { buildWalletTradeMessage } from '../embeds/wallet-buy.js';
 
 /**
  * Returns a message describing why the bot cannot post in `channelId`, or
@@ -87,9 +88,66 @@ export const setupCommand: BotCommand = {
       // Only after the engine has stored it. A cache entry the engine never
       // saw would work until the next restart and then vanish.
       guildConfigs.set(interaction.guildId, channelId);
-      await interaction.editReply(`✅ Cryptonix will post alerts to <#${channelId}> in this server.`);
     } catch (err) {
       await interaction.editReply(describeError(err));
+      return;
     }
+
+    // Prove the delivery path, rather than describing it.
+    //
+    // Everything up to here checks a permission bitfield, and a bitfield can
+    // be right while the send still fails — a slowmode, an integration
+    // restriction, an automod rule on embeds. Posting one real alert through
+    // the same builder the live path uses is the only thing that answers
+    // "will alerts actually arrive here" before a wallet happens to trade.
+    const delivered = await postSampleAlert(interaction, channelId);
+
+    await interaction.editReply(
+      delivered
+        ? `✅ Cryptonix will post alerts to <#${channelId}> in this server. A sample is there now, ` +
+            'so you can see it works — nothing was traded.'
+        : `⚠️ Saved, but the sample alert did not send to <#${channelId}>. Permissions look right, so ` +
+            'something else is blocking it — slowmode, automod, or an integration restriction. ' +
+            'Run `/status` after checking.'
+    );
   },
 };
+
+/**
+ * Posts one clearly-labelled sample trade, and reports whether it landed.
+ *
+ * Built through `buildWalletTradeMessage`, the same function the live fan-out
+ * calls, so this exercises the embed and the button too — not just the send.
+ * Labelled unmistakably, because an alert nobody can tell from a real one is
+ * worse than no alert.
+ */
+async function postSampleAlert(
+  interaction: Parameters<BotCommand['execute']>[0],
+  channelId: string
+): Promise<boolean> {
+  try {
+    const channel = await interaction.guild?.channels.fetch(channelId);
+    if (!channel?.isTextBased() || !('send' in channel)) return false;
+
+    const message = buildWalletTradeMessage({
+      walletId: 0,
+      walletLabel: 'Sample — not a real trade',
+      mint: 'So11111111111111111111111111111111111111112',
+      side: 'buy',
+      solAmount: 2.5,
+      tokenAmount: 1_250_000,
+      axiomLink: 'https://axiom.trade/t/So11111111111111111111111111111111111111112',
+    });
+
+    await channel.send({
+      content: 'This is what a wallet trade will look like. Nothing was traded.',
+      ...(message as Parameters<typeof channel.send>[0] as object),
+    } as Parameters<typeof channel.send>[0]);
+    return true;
+  } catch (err) {
+    // Never fatal: the routing is already saved, and the reply says the sample
+    // failed. Losing setup over a failed demonstration would be backwards.
+    console.error(`could not post the setup sample to ${channelId}`, err);
+    return false;
+  }
+}

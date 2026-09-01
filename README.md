@@ -105,7 +105,7 @@ pnpm --filter @cryptonix/discord-bot register-commands
 Then, in any server the bot is in:
 
 ```
-/setup                                  → alerts go to the channel you ran it in
+/setup                                  → alerts go to the channel you ran it in, plus one sample
 /track wallet address:<solana address>  → follow a wallet, and backfill its history
 /track twitter handle:@someone          → follow an X account, and post its tweets here
 /wallets                                → list the wallets being tracked
