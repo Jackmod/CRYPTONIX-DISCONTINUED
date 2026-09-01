@@ -50,7 +50,7 @@ Keep the Helius API key handy — Task 1 puts it in `.env`.
 **Interfaces:**
 - Produces: the workspace root every later task's `package.json` extends, and `.env` vars (`DATABASE_URL`, `HELIUS_API_KEY`, `WEBHOOK_BASE_URL`, `PORT`) every later task reads.
 
-- [ ] **Step 1: Create root `package.json`**
+- [x] **Step 1: Create root `package.json`**
 
 ```json
 {
@@ -69,7 +69,7 @@ Keep the Helius API key handy — Task 1 puts it in `.env`.
 }
 ```
 
-- [ ] **Step 2: Create `pnpm-workspace.yaml`**
+- [x] **Step 2: Create `pnpm-workspace.yaml`**
 
 ```yaml
 packages:
@@ -77,7 +77,7 @@ packages:
   - "packages/*"
 ```
 
-- [ ] **Step 3: Create `turbo.json`**
+- [x] **Step 3: Create `turbo.json`**
 
 ```json
 {
@@ -90,7 +90,7 @@ packages:
 }
 ```
 
-- [ ] **Step 4: Create `tsconfig.base.json`**
+- [x] **Step 4: Create `tsconfig.base.json`**
 
 ```json
 {
@@ -113,7 +113,7 @@ file would resolve relative to the repo root for every package, not
 each package's own directory. Each package sets `rootDir`/`outDir`
 itself (see Task 2 Step 1 and onward).
 
-- [ ] **Step 5: Create `.gitignore`**
+- [x] **Step 5: Create `.gitignore`**
 
 ```
 node_modules
@@ -124,7 +124,7 @@ dist
 .superpowers
 ```
 
-- [ ] **Step 6: Create `.env.example` and your real `.env`**
+- [x] **Step 6: Create `.env.example` and your real `.env`**
 
 ```
 DATABASE_URL=postgres://postgres:postgres@localhost:5432/cryptonix
@@ -136,7 +136,7 @@ PORT=8787
 
 Copy this to `.env` and paste in your real Helius API key from the Prerequisites step.
 
-- [ ] **Step 7: Start local Postgres via Docker**
+- [x] **Step 7: Start local Postgres via Docker**
 
 ```bash
 docker run -d --name cryptonix-pg -p 5432:5432 -e POSTGRES_PASSWORD=postgres postgres:16
@@ -144,7 +144,7 @@ docker exec cryptonix-pg psql -U postgres -c "CREATE DATABASE cryptonix;"
 docker exec cryptonix-pg psql -U postgres -c "CREATE DATABASE cryptonix_test;"
 ```
 
-- [ ] **Step 8: Create `packages/config/package.json` and shared tsconfig**
+- [x] **Step 8: Create `packages/config/package.json` and shared tsconfig**
 
 `packages/config/package.json`:
 ```json
@@ -163,7 +163,7 @@ docker exec cryptonix-pg psql -U postgres -c "CREATE DATABASE cryptonix_test;"
 }
 ```
 
-- [ ] **Step 9: Install and commit**
+- [x] **Step 9: Install and commit**
 
 ```bash
 pnpm install
@@ -185,7 +185,7 @@ git commit -m "Scaffold pnpm/Turborepo monorepo"
 **Interfaces:**
 - Produces: `buildAxiomLink(mint: string): string`
 
-- [ ] **Step 1: Scaffold the package**
+- [x] **Step 1: Scaffold the package**
 
 `packages/core/package.json`:
 ```json
@@ -227,7 +227,7 @@ import { defineConfig } from 'vitest/config';
 export default defineConfig({ test: { environment: 'node' } });
 ```
 
-- [ ] **Step 2: Write the failing test**
+- [x] **Step 2: Write the failing test**
 
 `packages/core/src/axiom-links/build-link.test.ts`:
 ```ts
@@ -242,14 +242,14 @@ describe('buildAxiomLink', () => {
 });
 ```
 
-- [ ] **Step 3: Run and confirm it fails**
+- [x] **Step 3: Run and confirm it fails**
 
 ```bash
 pnpm --filter @cryptonix/core test
 ```
 Expected: FAIL — `build-link.ts` does not exist yet.
 
-- [ ] **Step 4: Implement**
+- [x] **Step 4: Implement**
 
 `packages/core/src/axiom-links/build-link.ts`:
 ```ts
@@ -258,14 +258,14 @@ export function buildAxiomLink(mint: string): string {
 }
 ```
 
-- [ ] **Step 5: Run and confirm it passes**
+- [x] **Step 5: Run and confirm it passes**
 
 ```bash
 pnpm --filter @cryptonix/core test
 ```
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add packages/core
@@ -285,7 +285,7 @@ git commit -m "core: add Axiom link builder"
 - Consumes: nothing from earlier tasks.
 - Produces: `HeliusEnhancedTransaction`, `HeliusTokenTransfer`, `HeliusNativeTransfer` types; `ParsedSwap` type; `parseSwap(tx: HeliusEnhancedTransaction, walletAddress: string): ParsedSwap | null`. `apps/engine`'s Helius client and wallet monitor consume these.
 
-- [ ] **Step 1: Define the Helius payload shape**
+- [x] **Step 1: Define the Helius payload shape**
 
 `packages/core/src/wallet-parsing/types.ts`:
 ```ts
@@ -320,7 +320,7 @@ export interface ParsedSwap {
 }
 ```
 
-- [ ] **Step 2: Write the failing tests**
+- [x] **Step 2: Write the failing tests**
 
 `packages/core/src/wallet-parsing/parse-swap.test.ts`:
 ```ts
@@ -392,14 +392,14 @@ describe('parseSwap', () => {
 });
 ```
 
-- [ ] **Step 3: Run and confirm it fails**
+- [x] **Step 3: Run and confirm it fails**
 
 ```bash
 pnpm --filter @cryptonix/core test
 ```
 Expected: FAIL — `parse-swap.ts` does not exist.
 
-- [ ] **Step 4: Implement**
+- [x] **Step 4: Implement**
 
 `packages/core/src/wallet-parsing/parse-swap.ts`:
 ```ts
@@ -447,14 +447,14 @@ export function parseSwap(tx: HeliusEnhancedTransaction, walletAddress: string):
 export type { HeliusEnhancedTransaction, HeliusTokenTransfer, HeliusNativeTransfer, ParsedSwap } from './types.js';
 ```
 
-- [ ] **Step 5: Run and confirm it passes**
+- [x] **Step 5: Run and confirm it passes**
 
 ```bash
 pnpm --filter @cryptonix/core test
 ```
 Expected: PASS, all 3 tests.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add packages/core
@@ -473,7 +473,7 @@ git commit -m "core: add Helius swap transaction parser"
 - Consumes: nothing from earlier tasks.
 - Produces: `Lot` type, `applyFifo(lots: Lot[], sellTokenAmount: number, sellSolReceived: number): { remainingLots: Lot[]; realizedPnlSol: number }`. `apps/engine`'s PnL tracker consumes this.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 `packages/core/src/pnl/fifo.test.ts`:
 ```ts
@@ -536,14 +536,14 @@ describe('applyFifo', () => {
 });
 ```
 
-- [ ] **Step 2: Run and confirm it fails**
+- [x] **Step 2: Run and confirm it fails**
 
 ```bash
 pnpm --filter @cryptonix/core test
 ```
 Expected: FAIL — `fifo.ts` does not exist.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `packages/core/src/pnl/fifo.ts`:
 ```ts
@@ -602,14 +602,14 @@ export function applyFifo(lots: Lot[], sellTokenAmount: number, sellSolReceived:
 }
 ```
 
-- [ ] **Step 4: Run and confirm it passes**
+- [x] **Step 4: Run and confirm it passes**
 
 ```bash
 pnpm --filter @cryptonix/core test
 ```
 Expected: PASS, all 7 tests (4 original + 3 unmatched-basis cases).
 
-- [ ] **Step 5: Create the package's barrel export**
+- [x] **Step 5: Create the package's barrel export**
 
 `packages/core/src/index.ts`:
 ```ts
@@ -618,7 +618,7 @@ export * from './wallet-parsing/parse-swap.js'; // re-exports the ./wallet-parsi
 export * from './pnl/fifo.js';
 ```
 
-- [ ] **Step 6: Build and commit**
+- [x] **Step 6: Build and commit**
 
 ```bash
 pnpm --filter @cryptonix/core build
@@ -643,7 +643,7 @@ git commit -m "core: add FIFO PnL calculator, barrel export"
 - Consumes: nothing from earlier tasks.
 - Produces: `wallets`, `walletTrades`, `pnlDaily`, `alerts` Drizzle tables; `createDb(connectionString: string): Db`; `type Db`. `apps/engine` consumes all of these.
 
-- [ ] **Step 1: Scaffold the package**
+- [x] **Step 1: Scaffold the package**
 
 `packages/db/package.json`:
 ```json
@@ -687,7 +687,7 @@ git commit -m "core: add FIFO PnL calculator, barrel export"
 }
 ```
 
-- [ ] **Step 2: Write the schema**
+- [x] **Step 2: Write the schema**
 
 `packages/db/src/schema.ts`:
 ```ts
@@ -735,7 +735,7 @@ export const alerts = pgTable('alerts', {
 });
 ```
 
-- [ ] **Step 3: Write the client**
+- [x] **Step 3: Write the client**
 
 `packages/db/src/client.ts`:
 ```ts
@@ -757,7 +757,7 @@ export * from './schema.js';
 export * from './client.js';
 ```
 
-- [ ] **Step 4: Configure Drizzle Kit and generate the migration**
+- [x] **Step 4: Configure Drizzle Kit and generate the migration**
 
 `packages/db/drizzle.config.ts`:
 ```ts
@@ -780,7 +780,7 @@ cd ../..
 ```
 This creates the tables in both your dev and test databases.
 
-- [ ] **Step 5: Write a smoke test that the schema round-trips**
+- [x] **Step 5: Write a smoke test that the schema round-trips**
 
 `packages/db/src/schema.test.ts`:
 ```ts
@@ -807,14 +807,14 @@ describe('wallets table', () => {
 });
 ```
 
-- [ ] **Step 6: Run and confirm it passes**
+- [x] **Step 6: Run and confirm it passes**
 
 ```bash
 TEST_DATABASE_URL=postgres://postgres:postgres@localhost:5432/cryptonix_test pnpm --filter @cryptonix/db test
 ```
 Expected: PASS.
 
-- [ ] **Step 7: Build and commit**
+- [x] **Step 7: Build and commit**
 
 ```bash
 pnpm --filter @cryptonix/db build
@@ -838,7 +838,7 @@ git commit -m "db: add Drizzle schema, client, and migrations"
 - Consumes: `HeliusEnhancedTransaction` from `@cryptonix/core`.
 - Produces: `env` object (`databaseUrl`, `heliusApiKey`, `webhookBaseUrl`, `port`); `HeliusClient` class with `createWalletWebhook(address: string): Promise<string>`, `getTransactionHistory(address: string, before?: string): Promise<HeliusEnhancedTransaction[]>`. The wallet monitor and PnL tracker (Tasks 7-8) consume this class. (Webhook deletion, for an "untrack wallet" flow, is added alongside that feature in the Discord bot plan — no code here would exercise it yet.)
 
-- [ ] **Step 1: Scaffold the app**
+- [x] **Step 1: Scaffold the app**
 
 `apps/engine/package.json`:
 ```json
@@ -890,7 +890,7 @@ import { defineConfig } from 'vitest/config';
 export default defineConfig({ test: { environment: 'node' } });
 ```
 
-- [ ] **Step 2: Write env config**
+- [x] **Step 2: Write env config**
 
 `apps/engine/src/env.ts`:
 ```ts
@@ -933,7 +933,7 @@ export const env = {
 };
 ```
 
-- [ ] **Step 3: Write the failing test for the Helius client**
+- [x] **Step 3: Write the failing test for the Helius client**
 
 `apps/engine/src/helius/client.test.ts`:
 ```ts
@@ -981,14 +981,14 @@ describe('HeliusClient', () => {
 });
 ```
 
-- [ ] **Step 4: Run and confirm it fails**
+- [x] **Step 4: Run and confirm it fails**
 
 ```bash
 pnpm --filter @cryptonix/engine test
 ```
 Expected: FAIL — `client.ts` does not exist.
 
-- [ ] **Step 5: Implement**
+- [x] **Step 5: Implement**
 
 `apps/engine/src/helius/client.ts`:
 ```ts
@@ -1033,14 +1033,14 @@ export class HeliusClient {
 }
 ```
 
-- [ ] **Step 6: Run and confirm it passes**
+- [x] **Step 6: Run and confirm it passes**
 
 ```bash
 pnpm --filter @cryptonix/engine test
 ```
 Expected: PASS, all 3 tests.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add apps/engine
@@ -1060,7 +1060,7 @@ git commit -m "engine: scaffold app, add env config and Helius client"
 - Consumes: `Db`, `wallets`, `walletTrades`, `alerts` from `@cryptonix/db`; `parseSwap`, `buildAxiomLink`, `HeliusEnhancedTransaction` from `@cryptonix/core`; `HeliusClient` from Task 6.
 - Produces: `AlertBus` (extends `EventEmitter`, `publish(alert: { type: string; refId: number; payload: unknown }): void`, emits `'alert'`); `WalletMonitor` class with `trackWallet(address: string, label: string, isMine: boolean): Promise<Wallet>` and `handleWebhookPayload(transactions: HeliusEnhancedTransaction[]): Promise<void>`. Tasks 8-9 (PnL tracker, API server) consume both.
 
-- [ ] **Step 1: Write the alert bus (small enough it needs no separate test — covered by wallet-monitor's tests below)**
+- [x] **Step 1: Write the alert bus (small enough it needs no separate test — covered by wallet-monitor's tests below)**
 
 `apps/engine/src/api/alert-bus.ts`:
 ```ts
@@ -1079,7 +1079,7 @@ export class AlertBus extends EventEmitter {
 }
 ```
 
-- [ ] **Step 2: Write the failing tests for the wallet monitor**
+- [x] **Step 2: Write the failing tests for the wallet monitor**
 
 `apps/engine/src/monitors/wallet-monitor.test.ts`:
 ```ts
@@ -1217,14 +1217,14 @@ describe('WalletMonitor', () => {
 });
 ```
 
-- [ ] **Step 3: Run and confirm it fails**
+- [x] **Step 3: Run and confirm it fails**
 
 ```bash
 TEST_DATABASE_URL=postgres://postgres:postgres@localhost:5432/cryptonix_test pnpm --filter @cryptonix/engine test
 ```
 Expected: FAIL — `wallet-monitor.ts` does not exist.
 
-- [ ] **Step 4: Implement**
+- [x] **Step 4: Implement**
 
 `apps/engine/src/monitors/wallet-monitor.ts`:
 ```ts
@@ -1307,14 +1307,14 @@ export class WalletMonitor {
 }
 ```
 
-- [ ] **Step 5: Run and confirm it passes**
+- [x] **Step 5: Run and confirm it passes**
 
 ```bash
 TEST_DATABASE_URL=postgres://postgres:postgres@localhost:5432/cryptonix_test pnpm --filter @cryptonix/engine test
 ```
 Expected: PASS, all 5 tests.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add apps/engine
@@ -1333,7 +1333,7 @@ git commit -m "engine: add alert bus and wallet monitor"
 - Consumes: `Db`, `wallets`, `walletTrades`, `pnlDaily` from `@cryptonix/db`; `parseSwap`, `applyFifo`, `Lot`, `HeliusEnhancedTransaction` from `@cryptonix/core`; `HeliusClient` from Task 6.
 - Produces: `PnlTracker` class with `backfillWallet(walletId: number, address: string): Promise<void>` and `recomputePnl(walletId: number): Promise<void>`. The API server (Task 9) consumes `backfillWallet`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 `apps/engine/src/monitors/pnl-tracker.test.ts`:
 ```ts
@@ -1401,14 +1401,14 @@ describe('PnlTracker', () => {
 });
 ```
 
-- [ ] **Step 2: Run and confirm it fails**
+- [x] **Step 2: Run and confirm it fails**
 
 ```bash
 TEST_DATABASE_URL=postgres://postgres:postgres@localhost:5432/cryptonix_test pnpm --filter @cryptonix/engine test
 ```
 Expected: FAIL — `pnl-tracker.ts` does not exist.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `apps/engine/src/monitors/pnl-tracker.ts`:
 ```ts
@@ -1506,14 +1506,14 @@ export class PnlTracker {
 }
 ```
 
-- [ ] **Step 4: Run and confirm it passes**
+- [x] **Step 4: Run and confirm it passes**
 
 ```bash
 TEST_DATABASE_URL=postgres://postgres:postgres@localhost:5432/cryptonix_test pnpm --filter @cryptonix/engine test
 ```
 Expected: PASS, both tests.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add apps/engine
@@ -1533,13 +1533,13 @@ git commit -m "engine: add PnL tracker with FIFO backfill"
 - Consumes: `Db`, `wallets`, `walletTrades`, `pnlDaily` from `@cryptonix/db`; `WalletMonitor` from Task 7; `PnlTracker` from Task 8; `AlertBus` from Task 7.
 - Produces: `createServer(db: Db, walletMonitor: WalletMonitor, pnlTracker: PnlTracker, alertBus: AlertBus, solanaRpc: Pick<SolanaRpcClient, 'getBalanceSol'>): Express` (the `solanaRpc` param is added in Task 10) and `attachWebSocket(server: http.Server, alertBus: AlertBus): WebSocketServer`. Task 11 (`index.ts`) consumes both.
 
-- [ ] **Step 1: Add test dependency**
+- [x] **Step 1: Add test dependency**
 
 ```bash
 pnpm --filter @cryptonix/engine add -D supertest @types/supertest
 ```
 
-- [ ] **Step 2: Write the failing tests**
+- [x] **Step 2: Write the failing tests**
 
 `apps/engine/src/api/server.test.ts`:
 ```ts
@@ -1651,14 +1651,14 @@ describe('engine API', () => {
 });
 ```
 
-- [ ] **Step 3: Run and confirm it fails**
+- [x] **Step 3: Run and confirm it fails**
 
 ```bash
 TEST_DATABASE_URL=postgres://postgres:postgres@localhost:5432/cryptonix_test pnpm --filter @cryptonix/engine test
 ```
 Expected: FAIL — `server.ts` does not exist.
 
-- [ ] **Step 4: Implement the server**
+- [x] **Step 4: Implement the server**
 
 `apps/engine/src/api/server.ts`:
 ```ts
@@ -1757,7 +1757,7 @@ export function createServer(db: Db, walletMonitor: WalletMonitor, pnlTracker: P
 }
 ```
 
-- [ ] **Step 5: Implement WebSocket broadcast (no dedicated test — exercised end-to-end in Task 11's smoke test)**
+- [x] **Step 5: Implement WebSocket broadcast (no dedicated test — exercised end-to-end in Task 11's smoke test)**
 
 `apps/engine/src/api/ws.ts`:
 ```ts
@@ -1779,14 +1779,14 @@ export function attachWebSocket(server: Server, alertBus: AlertBus): WebSocketSe
 }
 ```
 
-- [ ] **Step 6: Run and confirm the API tests pass**
+- [x] **Step 6: Run and confirm the API tests pass**
 
 ```bash
 TEST_DATABASE_URL=postgres://postgres:postgres@localhost:5432/cryptonix_test pnpm --filter @cryptonix/engine test
 ```
 Expected: PASS, all 6 tests (4 original + 2 crash-path regression guards).
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add apps/engine
@@ -1807,13 +1807,13 @@ git commit -m "engine: add REST API and WebSocket alert broadcast"
 - Consumes: `wallets` from `@cryptonix/db`.
 - Produces: `SolanaRpcClient` class with `getBalanceSol(address: string): Promise<number>`. Task 11's `index.ts` constructs and injects it into `createServer`.
 
-- [ ] **Step 1: Add the dependency**
+- [x] **Step 1: Add the dependency**
 
 ```bash
 pnpm --filter @cryptonix/engine add @solana/web3.js
 ```
 
-- [ ] **Step 2: Write the failing test**
+- [x] **Step 2: Write the failing test**
 
 `apps/engine/src/solana/balance.test.ts`:
 ```ts
@@ -1833,14 +1833,14 @@ describe('SolanaRpcClient', () => {
 });
 ```
 
-- [ ] **Step 3: Run and confirm it fails**
+- [x] **Step 3: Run and confirm it fails**
 
 ```bash
 pnpm --filter @cryptonix/engine test
 ```
 Expected: FAIL — `balance.ts` does not exist.
 
-- [ ] **Step 4: Implement**
+- [x] **Step 4: Implement**
 
 `apps/engine/src/solana/balance.ts`:
 ```ts
@@ -1862,7 +1862,7 @@ export class SolanaRpcClient {
 }
 ```
 
-- [ ] **Step 5: Wire the balance route into the server**
+- [x] **Step 5: Wire the balance route into the server**
 
 Modify `apps/engine/src/api/server.ts` — add the import and change the function signature and body:
 
@@ -1902,7 +1902,7 @@ here must return 500 rather than escaping as an unhandled rejection:
   );
 ```
 
-- [ ] **Step 6: Update the server test's `buildApp` helper and add a test**
+- [x] **Step 6: Update the server test's `buildApp` helper and add a test**
 
 Modify `apps/engine/src/api/server.test.ts` — update `buildApp()`:
 ```ts
@@ -1933,14 +1933,14 @@ Add a new test in the same `describe` block:
   });
 ```
 
-- [ ] **Step 7: Run and confirm everything passes**
+- [x] **Step 7: Run and confirm everything passes**
 
 ```bash
 TEST_DATABASE_URL=postgres://postgres:postgres@localhost:5432/cryptonix_test pnpm --filter @cryptonix/engine test
 ```
 Expected: PASS, including the new balance test.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add apps/engine
@@ -1959,7 +1959,7 @@ git commit -m "engine: add live SOL balance endpoint"
 - Consumes: everything from Tasks 6-10.
 - Produces: the running engine process (`pnpm --filter @cryptonix/engine dev`), and a repeatable smoke-test script.
 
-- [ ] **Step 1: Write the entrypoint**
+- [x] **Step 1: Write the entrypoint**
 
 `apps/engine/src/index.ts`:
 ```ts
@@ -2009,14 +2009,14 @@ main().catch((err) => {
 });
 ```
 
-- [ ] **Step 2: Start the engine**
+- [x] **Step 2: Start the engine**
 
 ```bash
 pnpm --filter @cryptonix/engine dev
 ```
 Expected console output: `cryptonix engine listening on :8787`. Leave this running in its own terminal for the rest of this task.
 
-- [ ] **Step 3: Write the smoke-test script**
+- [x] **Step 3: Write the smoke-test script**
 
 This drives the running engine over HTTP and WebSocket exactly like a real client would — it's how you'll manually verify Cryptonix end-to-end from here on.
 
@@ -2080,7 +2080,7 @@ main().catch((err) => {
 });
 ```
 
-- [ ] **Step 4: Run the smoke test against the running engine**
+- [x] **Step 4: Run the smoke test against the running engine**
 
 In a second terminal (leave `pnpm --filter @cryptonix/engine dev` running from Step 2):
 ```bash
@@ -2088,7 +2088,7 @@ pnpm --filter @cryptonix/engine exec tsx scripts/smoke-test.ts
 ```
 Expected: prints each step, ending with `Smoke test passed.` This proves the full path — register a wallet (real Helius webhook call), receive a simulated buy, get an Axiom link, see it over the WebSocket, and read it back over REST — works end to end.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add apps/engine

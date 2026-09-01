@@ -77,7 +77,7 @@
 
 **Why `guildId` is the primary key and not a serial:** a Discord snowflake is already a unique, stable identifier, and every lookup is "what channel does this guild use?". A surrogate key would add a second unique index for nothing.
 
-- [ ] **Step 1: Add the table to the schema**
+- [x] **Step 1: Add the table to the schema**
 
 Append to `packages/db/src/schema.ts`:
 
@@ -90,7 +90,7 @@ export const discordGuilds = pgTable('discord_guilds', {
 });
 ```
 
-- [ ] **Step 2: Write the failing test**
+- [x] **Step 2: Write the failing test**
 
 Append to `packages/db/src/schema.test.ts`, and extend the import on line 2 to `import { createDb, wallets, discordGuilds } from './index';`:
 
@@ -126,12 +126,12 @@ describe('discord_guilds table', () => {
 });
 ```
 
-- [ ] **Step 3: Run and confirm it fails**
+- [x] **Step 3: Run and confirm it fails**
 
 Run: `pnpm --filter @cryptonix/db test`
 Expected: FAIL — relation "discord_guilds" does not exist
 
-- [ ] **Step 4: Generate and apply the migration**
+- [x] **Step 4: Generate and apply the migration**
 
 ```bash
 pnpm --filter @cryptonix/db db:generate
@@ -146,12 +146,12 @@ DATABASE_URL="$TEST_DATABASE_URL" pnpm --filter @cryptonix/db db:push
 
 Expected: a new file under `packages/db/drizzle/` creating `discord_guilds`, and both databases updated.
 
-- [ ] **Step 5: Run and confirm it passes**
+- [x] **Step 5: Run and confirm it passes**
 
 Run: `pnpm --filter @cryptonix/db test`
 Expected: PASS — 4 tests
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add packages/db
@@ -177,7 +177,7 @@ git commit -m "db: add discord_guilds table for per-server alert routing"
 
 **Why PUT upserts rather than POST-then-PATCH:** `/setup` is idempotent from the user's point of view — running it again just moves the channel. One route that always converges on the requested state is simpler than making the bot decide whether a config already exists.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Add to the `describe('engine API', ...)` block in `apps/engine/src/api/server.test.ts`. Extend the `beforeEach` TRUNCATE on line 15 to include the new table:
 
@@ -235,12 +235,12 @@ Then the tests:
   });
 ```
 
-- [ ] **Step 2: Run and confirm it fails**
+- [x] **Step 2: Run and confirm it fails**
 
 Run: `pnpm --filter @cryptonix/engine test -- server`
 Expected: FAIL — 404 from Express for the unregistered routes
 
-- [ ] **Step 3: Implement the routes**
+- [x] **Step 3: Implement the routes**
 
 Add to `apps/engine/src/api/server.ts` after the `DELETE /wallets/:id` route. Extend the `@cryptonix/db` import at the top of the file to include `discordGuilds`:
 
@@ -286,12 +286,12 @@ Add to `apps/engine/src/api/server.ts` after the `DELETE /wallets/:id` route. Ex
   );
 ```
 
-- [ ] **Step 4: Run and confirm it passes**
+- [x] **Step 4: Run and confirm it passes**
 
 Run: `pnpm --filter @cryptonix/engine test`
 Expected: PASS — 37 tests
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add apps/engine/src/api
@@ -321,7 +321,7 @@ git commit -m "engine: add Discord guild config routes"
   ```
   And an `env` without `alertChannelId`, with `devGuildId: string | undefined`.
 
-- [ ] **Step 1: Write the failing client tests**
+- [x] **Step 1: Write the failing client tests**
 
 Add to `describe('EngineClient', ...)` in `apps/discord-bot/src/engine/client.test.ts`:
 
@@ -356,7 +356,7 @@ Add to `describe('EngineClient', ...)` in `apps/discord-bot/src/engine/client.te
   });
 ```
 
-- [ ] **Step 2: Update the env test**
+- [x] **Step 2: Update the env test**
 
 In `apps/discord-bot/src/env.test.ts`, remove `DISCORD_ALERT_CHANNEL_ID` from the `REQUIRED` object and replace the missing-variable test with one that targets a still-required variable, then add a test for the now-optional guild id:
 
@@ -383,12 +383,12 @@ In `apps/discord-bot/src/env.test.ts`, remove `DISCORD_ALERT_CHANNEL_ID` from th
 
 Also remove `DISCORD_ALERT_CHANNEL_ID: 'channel1',` from `REQUIRED` and drop the `expect(env.alertChannelId)` assertion from the first test.
 
-- [ ] **Step 3: Run and confirm both fail**
+- [x] **Step 3: Run and confirm both fail**
 
 Run: `pnpm --filter @cryptonix/discord-bot test`
 Expected: FAIL — `listGuildConfigs is not a function`, and `env.devGuildId` undefined because the property does not exist yet
 
-- [ ] **Step 4: Implement the client methods**
+- [x] **Step 4: Implement the client methods**
 
 Add to `apps/discord-bot/src/engine/client.ts`:
 
@@ -419,7 +419,7 @@ and inside the `EngineClient` class:
   }
 ```
 
-- [ ] **Step 5: Implement the env change**
+- [x] **Step 5: Implement the env change**
 
 In `apps/discord-bot/src/env.ts`, replace the exported `env` object with:
 
@@ -438,12 +438,12 @@ export const env = {
 
 `DISCORD_ALERT_CHANNEL_ID` is deliberately gone — routing lives in `discord_guilds` now, per server.
 
-- [ ] **Step 6: Run and confirm it passes**
+- [x] **Step 6: Run and confirm it passes**
 
 Run: `pnpm --filter @cryptonix/discord-bot test`
 Expected: PASS — 37 tests
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add apps/discord-bot/src/engine apps/discord-bot/src/env.ts apps/discord-bot/src/env.test.ts
@@ -474,7 +474,7 @@ git commit -m "discord-bot: add guild config client, drop single-channel env"
 
 **Why a cache at all:** alerts arrive on a socket and must be posted immediately. Asking the engine for routing on every alert adds a round trip to the hot path and makes the bot useless the moment the engine blips — exactly when a buffered alert most needs delivering. The map is small (one row per server) and only changes when someone runs `/setup`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `apps/discord-bot/src/guilds/config-cache.test.ts`:
 
@@ -535,12 +535,12 @@ describe('GuildConfigCache', () => {
 });
 ```
 
-- [ ] **Step 2: Run and confirm it fails**
+- [x] **Step 2: Run and confirm it fails**
 
 Run: `pnpm --filter @cryptonix/discord-bot test -- config-cache`
 Expected: FAIL — cannot find module `./config-cache`
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Create `apps/discord-bot/src/guilds/config-cache.ts`:
 
@@ -584,12 +584,12 @@ export class GuildConfigCache {
 }
 ```
 
-- [ ] **Step 4: Run and confirm it passes**
+- [x] **Step 4: Run and confirm it passes**
 
 Run: `pnpm --filter @cryptonix/discord-bot test -- config-cache`
 Expected: PASS — 5 tests
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add apps/discord-bot/src/guilds
@@ -614,7 +614,7 @@ git commit -m "discord-bot: add guild config cache"
 - Restricted with `setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)`; without it any member could redirect the alert feed.
 - Writes through the engine first, and only updates the cache once that succeeds — a cache entry pointing at a channel the engine does not know about would survive until restart and then silently vanish.
 
-- [ ] **Step 1: Extend `CommandDeps`**
+- [x] **Step 1: Extend `CommandDeps`**
 
 In `apps/discord-bot/src/commands/types.ts`:
 
@@ -627,7 +627,7 @@ export interface CommandDeps {
 }
 ```
 
-- [ ] **Step 2: Write the failing tests**
+- [x] **Step 2: Write the failing tests**
 
 The existing fake interaction in `commands.test.ts` has no guild or channel. Add a second builder next to it, then the tests:
 
@@ -699,12 +699,12 @@ describe('/setup', () => {
 
 Add `import { setupCommand } from './setup';` to the top of the file, and pass `guildConfigs: {} as any` into the existing `execute` calls for track/untrack/pnl so they still typecheck against the widened `CommandDeps`.
 
-- [ ] **Step 3: Run and confirm it fails**
+- [x] **Step 3: Run and confirm it fails**
 
 Run: `pnpm --filter @cryptonix/discord-bot test -- commands`
 Expected: FAIL — cannot find module `./setup`
 
-- [ ] **Step 4: Implement**
+- [x] **Step 4: Implement**
 
 Create `apps/discord-bot/src/commands/setup.ts`:
 
@@ -750,12 +750,12 @@ export const setupCommand: BotCommand = {
 };
 ```
 
-- [ ] **Step 5: Run and confirm it passes**
+- [x] **Step 5: Run and confirm it passes**
 
 Run: `pnpm --filter @cryptonix/discord-bot test`
 Expected: PASS — 41 tests
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add apps/discord-bot/src/commands
@@ -775,7 +775,7 @@ git commit -m "discord-bot: add /setup command for per-server alert routing"
 
 **Why both:** global registration is what makes the bot work in servers it has never seen, but Discord can take up to an hour to propagate it. Registering additionally to a development guild makes commands appear there instantly, which matters when iterating.
 
-- [ ] **Step 1: Implement**
+- [x] **Step 1: Implement**
 
 Replace the body of `apps/discord-bot/src/commands/registry.ts`:
 
@@ -815,12 +815,12 @@ if (process.argv[1]?.endsWith('registry.ts') || process.argv[1]?.endsWith('regis
 }
 ```
 
-- [ ] **Step 2: Run the suite**
+- [x] **Step 2: Run the suite**
 
 Run: `pnpm --filter @cryptonix/discord-bot test`
 Expected: PASS — 41 tests, unchanged
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add apps/discord-bot/src/commands/registry.ts
@@ -849,7 +849,7 @@ git commit -m "discord-bot: register commands globally with optional dev guild"
 
 **Why fan-out is its own file rather than a closure in `index.ts`:** it holds the rule that one server's failure must not affect another's, which is the part most worth testing, and `index.ts` is wiring that cannot be unit-tested without a live Discord client.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `apps/discord-bot/src/guilds/fan-out.test.ts`:
 
@@ -924,12 +924,12 @@ describe('fanOutAlert', () => {
 });
 ```
 
-- [ ] **Step 2: Run and confirm it fails**
+- [x] **Step 2: Run and confirm it fails**
 
 Run: `pnpm --filter @cryptonix/discord-bot test -- fan-out`
 Expected: FAIL — cannot find module `./fan-out`
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Create `apps/discord-bot/src/guilds/fan-out.ts`:
 
@@ -965,7 +965,7 @@ export async function fanOutAlert(
 }
 ```
 
-- [ ] **Step 4: Rewrite the entrypoint**
+- [x] **Step 4: Rewrite the entrypoint**
 
 Replace `apps/discord-bot/src/index.ts`:
 
@@ -1061,17 +1061,17 @@ client.login(env.discordToken).catch((err) => {
 });
 ```
 
-- [ ] **Step 5: Run and confirm everything passes**
+- [x] **Step 5: Run and confirm everything passes**
 
 Run: `pnpm --filter @cryptonix/discord-bot test`
 Expected: PASS — 46 tests
 
-- [ ] **Step 6: Build**
+- [x] **Step 6: Build**
 
 Run: `pnpm build`
 Expected: all four packages compile
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add apps/discord-bot/src
@@ -1082,12 +1082,12 @@ git commit -m "discord-bot: fan out alerts per server, prompt for setup on join"
 
 ### Task 8: full verification
 
-- [ ] **Step 1: Run everything fresh**
+- [x] **Step 1: Run everything fresh**
 
 Run: `pnpm exec turbo run test --force`
 Expected: PASS — core 25, db 4, engine 37, discord-bot 46
 
-- [ ] **Step 2: Update `.env.example`**
+- [x] **Step 2: Update `.env.example`**
 
 `DISCORD_ALERT_CHANNEL_ID` is no longer read. Replace that line with a comment so anyone copying the file is not misled:
 
@@ -1120,7 +1120,7 @@ Expected: `Registered 4 slash commands globally and to dev guild …`, then the 
 4. Run `/setup channel:#somewhere-else`, replay again → the embed now arrives in the new channel.
 5. Add the bot to a second server, run `/setup` there, replay once more → **both** servers receive the same alert, each in its own channel.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add .env.example
