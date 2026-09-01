@@ -214,6 +214,27 @@ describe('TweetMonitor', () => {
     expect(rows.find((r) => r.handle === 'cobie')?.lastTweetId).toBe('8');
   });
 
+  it('posts each tweet once even when two polls run at the same time', async () => {
+    // Two engines against one database, or a sweep outlasting its interval.
+    // The insert is the lock: whichever transaction loses the conflict gets
+    // no row back and does not publish.
+    await track('ansem', '1');
+    const bus = new AlertBus();
+    const published: unknown[] = [];
+    bus.on('alert', (a) => published.push(a));
+
+    const page = [tweet({ id: '10' }), tweet({ id: '11' }), tweet({ id: '12' })];
+    const source = { name: 'fake', fetchNewTweets: async () => page };
+    const a = new TweetMonitor(db, source, bus);
+    const b = new TweetMonitor(db, source, bus);
+
+    const [fromA, fromB] = await Promise.all([a.poll(), b.poll()]);
+
+    expect(fromA + fromB).toBe(3);
+    expect(published).toHaveLength(3);
+    expect(await db.select().from(tweets)).toHaveLength(3);
+  });
+
   it('ignores a tweet from an account nobody follows', async () => {
     // A source answering with a retweet or quote reports the ORIGINAL author,
     // and posting that means announcing someone nobody asked to follow.
