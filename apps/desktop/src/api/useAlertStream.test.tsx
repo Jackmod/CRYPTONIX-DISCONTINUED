@@ -218,6 +218,54 @@ describe('useAlertStream', () => {
     await waitFor(() => expect(calls).toEqual([199]));
   });
 
+  it('walks past a page of alerts this build cannot render', async () => {
+    // Regression: the cursor advanced only over RENDERED items, so a page made
+    // entirely of skipped types — the tweet alerts Phase 3 adds will be
+    // exactly that — left it where it was and the walk refetched forever.
+    const tweet = (id: number): AlertRecord => ({
+      id,
+      type: 'tweet',
+      refId: id,
+      ts: '2026-09-01T00:00:00.000Z',
+      payload: { text: 'nothing this build can draw' },
+    });
+
+    let call = 0;
+    const pages: AlertRecord[][] = [
+      Array.from({ length: 50 }, (_, i) => tweet(200 + i)),
+      [alert(400)],
+    ];
+    const { engine, calls } = engineWith(async () => pages[call++] ?? [], [alert(199)]);
+
+    render(<Probe engine={engine} />);
+    await waitFor(() => expect(ids()).toBe('199'));
+
+    FakeSocket.instances[0].open();
+
+    // Second page asked from 249, the newest id in the skipped page.
+    await waitFor(() => expect(calls).toEqual([199, 249]));
+    await waitFor(() => expect(ids()).toBe('400,199'));
+  });
+
+  it('marks a live alert it cannot render as seen, so catch-up does not refetch it', async () => {
+    const { engine, calls } = engineWith([], [alert(10)]);
+    render(<Probe engine={engine} />);
+    await waitFor(() => expect(ids()).toBe('10'));
+
+    const socket = FakeSocket.instances[0];
+    socket.open();
+    await waitFor(() => expect(calls).toEqual([10]));
+
+    socket.deliver({ id: 11, type: 'tweet', payload: { text: 'skipped' } });
+    socket.drop();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_000);
+    });
+    FakeSocket.instances[1].open();
+
+    await waitFor(() => expect(calls.at(-1)).toBe(11));
+  });
+
   it('backs off further on each failed attempt rather than hammering the engine', async () => {
     const { engine } = engineWith([]);
     render(<Probe engine={engine} />);

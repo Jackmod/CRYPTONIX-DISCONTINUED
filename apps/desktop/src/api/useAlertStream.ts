@@ -35,14 +35,24 @@ export function useAlertStream(engine: EngineClient, wsUrl: string, apiKey: stri
     let backoff = INITIAL_BACKOFF_MS;
     let closed = false;
 
-    const absorb = (incoming: FeedItem[]) => {
-      if (incoming.length === 0) return;
-      for (const item of incoming) highestId.current = Math.max(highestId.current, item.id);
-      setItems((current) => mergeFeed(current, incoming));
-    };
+    type RawAlert = { id: number; type: string; payload: unknown; ts?: string };
 
-    const toItems = (rows: { id: number; type: string; payload: unknown; ts?: string }[]) =>
-      rows.map(toFeedItem).filter((item): item is FeedItem => item !== null);
+    /**
+     * Takes in a batch of raw alerts: renders what it can, and marks ALL of
+     * them seen.
+     *
+     * The cursor has to move over every id, not only the ones this build can
+     * draw. Advancing it from the rendered items alone meant a page made
+     * entirely of alerts this version skips — the tweet alerts from the other
+     * half of Phase 3 will do exactly that — left the cursor where it was, so
+     * the walk fetched the same page again and never got past it.
+     */
+    const absorb = (rows: RawAlert[]) => {
+      if (rows.length === 0) return;
+      for (const row of rows) highestId.current = Math.max(highestId.current, row.id);
+      const items = rows.map(toFeedItem).filter((item): item is FeedItem => item !== null);
+      if (items.length > 0) setItems((current) => mergeFeed(current, items));
+    };
 
     /**
      * Anything published while this client was not listening.
@@ -58,14 +68,14 @@ export function useAlertStream(engine: EngineClient, wsUrl: string, apiKey: stri
     const catchUp = async () => {
       try {
         if (highestId.current === 0) {
-          absorb(toItems(await engine.listRecentAlerts(FEED_CAP)));
+          absorb(await engine.listRecentAlerts(FEED_CAP));
           return;
         }
 
         for (let page = 0; page < MAX_CATCH_UP_PAGES; page++) {
           const missed = await engine.listAlertsSince(highestId.current);
           if (missed.length === 0) return;
-          absorb(toItems(missed));
+          absorb(missed);
           // A short page means the backlog is exhausted. A full one does not,
           // so ask again from the new high-water mark.
           if (missed.length < ENGINE_PAGE_SIZE) return;
@@ -92,9 +102,10 @@ export function useAlertStream(engine: EngineClient, wsUrl: string, apiKey: stri
 
       socket.onmessage = (event) => {
         try {
-          const alert = JSON.parse(String(event.data)) as { id: number; type: string; payload: unknown };
-          const item = toFeedItem(alert);
-          if (item) absorb([item]);
+          const alert = JSON.parse(String(event.data)) as RawAlert;
+          // Marked seen whether or not it renders, so a live alert this build
+          // skips does not leave the cursor behind for the next catch-up.
+          if (typeof alert?.id === 'number') absorb([alert]);
         } catch {
           // One malformed frame must not take the feed down.
         }
