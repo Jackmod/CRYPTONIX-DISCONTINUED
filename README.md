@@ -84,7 +84,9 @@ pnpm --filter @cryptonix/desktop dev           # or just in a browser, on :5173
 ```
 
 On first run, open **Settings** and paste the same `ENGINE_API_KEY` the engine
-uses. The URLs default to `http://localhost:8787` and `ws://localhost:8787/ws`.
+uses. The engine sends permissive CORS headers so the webview can reach it —
+its origin is never the engine's — which is safe because this API carries no
+cookies: a request from anywhere without the key is refused. The URLs default to `http://localhost:8787` and `ws://localhost:8787/ws`.
 Settings are stored on that machine only, never in the repo.
 
 To produce installers (`.msi` and `.exe` on Windows, `.dmg` on macOS,

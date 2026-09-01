@@ -170,6 +170,37 @@ export function createServer(
 
   const app = express();
 
+  /*
+   * CORS, and why it has to come before auth.
+   *
+   * The desktop app is a web page inside a webview, and its origin is never
+   * the engine's: `http://tauri.localhost` on Windows, `tauri://localhost` on
+   * macOS, `http://localhost:5173` in development. Without these headers the
+   * browser blocks every REST response and the app shows nothing but "cannot
+   * reach the engine" — while the WebSocket, which CORS does not govern,
+   * connects perfectly and makes it look like a server problem.
+   *
+   * `*` is the right origin here and not a weakening: this API carries no
+   * cookies and no ambient authority, so a request from a hostile page simply
+   * arrives without the key and is refused. Credentials are deliberately NOT
+   * allowed, which is also what makes `*` legal.
+   *
+   * The preflight must answer before requireAuth: a browser sends OPTIONS with
+   * no Authorization header at all, so authenticating it would 401 every
+   * preflight and block the request it was asking about.
+   */
+  app.use((req, res, next) => {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH, PUT, DELETE, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type');
+    res.setHeader('Access-Control-Max-Age', '86400');
+    if (req.method === 'OPTIONS') {
+      res.sendStatus(204);
+      return;
+    }
+    next();
+  });
+
   // Auth first, parser second. With the parser mounted first, a malformed body
   // from an UNAUTHENTICATED caller reached body-parser, threw, and fell through
   // to Express's default error handler — which renders an HTML stack trace

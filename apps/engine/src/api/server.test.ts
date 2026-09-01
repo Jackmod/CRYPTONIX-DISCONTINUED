@@ -721,6 +721,48 @@ describe('engine API', () => {
     expect((await api(app).get(`/alerts?since=${head.body.id}`)).body).toHaveLength(0);
   });
 
+  it('answers a browser preflight without demanding the api key', async () => {
+    // A preflight carries no Authorization header at all, so authenticating it
+    // would 401 every one — and the desktop app, whose origin is never the
+    // engine's, would then be unable to make a single REST call.
+    const app = buildApp();
+    const res = await request(app).options('/wallets');
+
+    expect(res.status).toBe(204);
+    expect(res.headers['access-control-allow-origin']).toBe('*');
+    expect(res.headers['access-control-allow-headers']).toContain('Authorization');
+    expect(res.headers['access-control-allow-methods']).toContain('PATCH');
+  });
+
+  it('lets a browser read a real response, not only the preflight', async () => {
+    const app = buildApp();
+    const res = await api(app).get('/wallets');
+    expect(res.headers['access-control-allow-origin']).toBe('*');
+  });
+
+  it('marks an error response readable too, so the app can show the reason', async () => {
+    // Without the header on a 401 the browser hides the body, and the app can
+    // only report "cannot reach the engine" for a wrong key.
+    const app = buildApp();
+    const res = await request(app).get('/wallets');
+    expect(res.status).toBe(401);
+    expect(res.headers['access-control-allow-origin']).toBe('*');
+  });
+
+  it('does not allow credentials, which is what makes the wildcard origin legal', () => {
+    // This API is bearer-token only; a cookie must never ride along.
+    return request(buildApp())
+      .options('/wallets')
+      .expect((res) => {
+        expect(res.headers['access-control-allow-credentials']).toBeUndefined();
+      });
+  });
+
+  it('still refuses a real request with no key, preflight or not', async () => {
+    const app = buildApp();
+    expect((await request(app).post('/wallets').send({ address: 'x', label: 'y' })).status).toBe(401);
+  });
+
   it('PATCH /wallets/:id renames a wallet without touching its history', async () => {
     // Untracking was the only way to fix a label, and that deletes the trades
     // and the PnL under it, then costs a fresh Helius backfill to recover.
