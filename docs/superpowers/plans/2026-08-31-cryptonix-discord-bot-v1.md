@@ -2275,14 +2275,43 @@ Expected: the bot logs `discord bot ready as <name>#0000` and `subscribed to eng
 
 - [ ] **Step 6: Exercise the commands in Discord**
 
-In your server:
+In your server. Commands 4-8 were added after this plan was first written, so
+they are listed here rather than in a separate pass:
 
-1. `/track wallet address:<a real Solana address> label:Whale mine:false`
+1. `/status`
+   Expected: an embed saying alerts go to the channel you set up, the engine is
+   reachable, and which monitors are running. Run this FIRST — if anything is
+   wrong, it says what, and the rest of this step will not work until it is
+   green.
+2. `/track wallet address:<a real Solana address> label:Whale mine:false`
    Expected: `✅ Tracking **Whale** … Historical backfill has started.`
-2. `/pnl wallet:Whale`
-   Expected: an embed titled `PnL — Whale — <current month>` with a heatmap grid. Straight after tracking, backfill may still be running, so an all-⬜ calendar and `—` win rate is the correct output, not a bug.
-3. `/untrack wallet address:<the same address>`
-   Expected: `🗑️ Stopped tracking **Whale** and released its Helius webhook.`
+3. `/pnl wallet:Whale`
+   Expected: an embed titled `PnL — Whale — <current month>` with a heatmap
+   grid **and an attached PNG calendar**. Straight after tracking, backfill may
+   still be running, so an all-⬜ calendar and `—` win rate is the correct
+   output, not a bug.
+4. `/wallets`
+   Expected: `Whale` listed with a shortened address, marked ★ if you passed
+   `mine:true`.
+5. `/untrack wallet address:` — start typing and stop.
+   Expected: the wallet is **suggested** as you type. Nobody should have to
+   retype a 44-character address.
+6. `/track twitter handle:@someone`
+   Expected: `✅ Following **@someone**` plus a note that following is quiet.
+   Nothing should be posted for tweets from before now. If `TWITTER_API_KEY`
+   is unset this still succeeds — the handle is stored, and only discovery is
+   switched off.
+7. `/following`
+   Expected: `@someone` listed, linking to the profile. With no key set it will
+   say it is waiting for the first check, which is correct.
+8. `/untrack twitter handle:@someone`, then `/untrack wallet address:<the same address>`
+   Expected: `🗑️ Stopped following **@someone** …` and
+   `🗑️ Stopped tracking **Whale** and released its Helius webhook.`
+
+Also worth one deliberate check, because it is the failure nothing else
+announces: revoke the bot's **Send Messages** permission in the alert channel,
+run `/status`, and confirm it reports that it cannot post there. Then grant it
+back.
 
 - [ ] **Step 7: Verify a live alert reaches Discord**
 

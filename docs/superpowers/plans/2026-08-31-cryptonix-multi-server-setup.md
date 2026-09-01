@@ -1119,6 +1119,12 @@ Expected: `Registered 4 slash commands globally and to dev guild …`, then the 
 3. Replay a synthetic Helius delivery (see bot v1 plan, Task 11 Step 7) → the embed appears in the channel you chose.
 4. Run `/setup channel:#somewhere-else`, replay again → the embed now arrives in the new channel.
 5. Add the bot to a second server, run `/setup` there, replay once more → **both** servers receive the same alert, each in its own channel.
+6. In the second server, run `/status` → it reports that server's own channel,
+   not the first one's. The routing is per-server; the wallet list is not.
+7. Kick the bot from the second server, then re-invite it → it posts the
+   onboarding message again, and `/status` there says it is not set up until
+   you run `/setup` a second time. Its old routing row should not have
+   survived: that is what GuildDelete and the startup reconciliation are for.
 
 - [x] **Step 5: Commit**
 
