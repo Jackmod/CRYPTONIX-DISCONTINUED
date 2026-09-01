@@ -1,6 +1,7 @@
 import type { AlertEvent } from '../engine/alert-stream.js';
 import type { GuildConfigCache } from './config-cache.js';
 import { buildWalletTradeMessage, isWalletAlertPayload } from '../embeds/wallet-buy.js';
+import { buildNewCoinMessage, isNewCoinAlertPayload } from '../embeds/new-coin.js';
 
 export interface FanOutResult {
   /** Guilds that had a configured channel to try. */
@@ -9,20 +10,37 @@ export interface FanOutResult {
   delivered: number;
 }
 
+/** The Discord message for an alert, or null if this version cannot render it. */
+function renderAlert(alert: AlertEvent): { embeds: unknown[]; components: unknown[] } | null {
+  if (alert.type === 'wallet_buy' || alert.type === 'wallet_sell') {
+    if (!isWalletAlertPayload(alert.payload)) {
+      console.error(`alert ${alert.id} has an unexpected wallet payload shape; skipping`);
+      return null;
+    }
+    return buildWalletTradeMessage(alert.payload);
+  }
+
+  if (alert.type === 'new_coin') {
+    if (!isNewCoinAlertPayload(alert.payload)) {
+      console.error(`alert ${alert.id} has an unexpected new-coin payload shape; skipping`);
+      return null;
+    }
+    return buildNewCoinMessage(alert.payload);
+  }
+
+  return null;
+}
+
 export async function fanOutAlert(
   alert: AlertEvent,
   cache: Pick<GuildConfigCache, 'entries'>,
   sendToChannel: (channelId: string, message: unknown) => Promise<void>
 ): Promise<FanOutResult> {
-  // Phase 3 puts tweet and new-coin alerts on this same socket. Skip quietly
-  // rather than rendering something this version does not understand.
-  if (alert.type !== 'wallet_buy' && alert.type !== 'wallet_sell') return { attempted: 0, delivered: 0 };
-  if (!isWalletAlertPayload(alert.payload)) {
-    console.error(`alert ${alert.refId} has an unexpected payload shape; skipping`);
-    return { attempted: 0, delivered: 0 };
-  }
-
-  const message = buildWalletTradeMessage(alert.payload);
+  // One renderer per alert type. Anything unrecognised — a tweet alert, once
+  // that half of Phase 3 lands — is skipped quietly rather than rendered as
+  // something it is not.
+  const message = renderAlert(alert);
+  if (message === null) return { attempted: 0, delivered: 0 };
 
   // Sequential and individually guarded: one server with revoked permissions
   // or a deleted channel must not cost every other server its alerts.

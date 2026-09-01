@@ -11,9 +11,9 @@ No trades are ever placed. Cryptonix produces links, never orders.
 
 | Package | What it is |
 |---|---|
-| `apps/engine` | The service. Helius webhooks in, trades and PnL in Postgres, REST + WebSocket out. |
+| `apps/engine` | The service. Helius webhooks in, trades and PnL in Postgres, REST + WebSocket out. Optional new-coin scanner. |
 | `apps/discord-bot` | discord.js process. Alerts as embeds, plus `/setup`, `/track`, `/untrack`, `/pnl`. |
-| `packages/core` | Pure domain logic: Axiom links, swap parsing, FIFO PnL, the heatmap. No I/O. |
+| `packages/core` | Pure domain logic: Axiom links, swap parsing, FIFO PnL, the heatmap, coin momentum. No I/O. |
 | `packages/db` | Drizzle schema, migrations, and the Postgres client. |
 | `tests/e2e` | A real engine on a real port against real Postgres, with the real bot pipeline wired to it. |
 
@@ -126,6 +126,37 @@ for db in cryptonix_test cryptonix_test_db cryptonix_test_e2e; do
     pnpm --filter @cryptonix/db db:push
 done
 ```
+
+## New-coin scanner
+
+Off by default. Set `COIN_SCANNER_ENABLED=true` and the engine polls
+DexScreener once a minute for newly launched Solana coins, scores their
+short-term momentum, and publishes a `new_coin` alert for any that clear every
+gate. It needs no account and no key.
+
+A coin is alerted at most once, ever — the `scanned_coins` table remembers
+what has been considered, so a restart does not re-alert everything. Coins
+that were rejected are recorded too, and stay eligible: plenty launch quiet
+and move minutes later.
+
+### Tuning the thresholds
+
+The defaults are deliberately conservative — a scanner that cries wolf is
+worse than one that stays quiet. Every gate is an environment variable
+(`COIN_MIN_VOLUME_5M` and friends, listed in `.env.example`), so tuning never
+needs a code change.
+
+To pick values from evidence rather than taste:
+
+```bash
+pnpm --filter @cryptonix/engine exec tsx scripts/threshold-sweep.ts
+```
+
+That samples the coins listed right now, prints their momentum side by side,
+and reports how many would pass each gate set. Memecoin launches are bursty,
+so run it across a few different hours before moving anything. If nothing
+passes, look at the distribution to see which gate is binding — often the
+market is simply quiet.
 
 ## Checking the engine without Discord
 

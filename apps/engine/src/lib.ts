@@ -13,3 +13,5 @@ export { PnlTracker } from './monitors/pnl-tracker.js';
 export { HeliusClient } from './helius/client.js';
 export { RateLimiter } from './helius/rate-limiter.js';
 export { isValidSolanaAddress } from './solana/address.js';
+export { DexScreenerClient } from './coins/dexscreener.js';
+export { CoinScanner, type NewCoinAlertPayload } from './monitors/coin-scanner.js';

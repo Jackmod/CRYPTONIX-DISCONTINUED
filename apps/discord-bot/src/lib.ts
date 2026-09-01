@@ -10,3 +10,4 @@ export { fanOutAlert } from './guilds/fan-out.js';
 export { buildWalletTradeMessage, isWalletAlertPayload } from './embeds/wallet-buy.js';
 export { buildPnlEmbed } from './embeds/pnl.js';
 export { AlertReplay } from './alerts/replay.js';
+export { buildNewCoinMessage, isNewCoinAlertPayload } from './embeds/new-coin.js';

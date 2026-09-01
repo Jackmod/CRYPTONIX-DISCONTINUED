@@ -23,6 +23,24 @@ function loadEnvFile() {
 
 loadEnvFile();
 
+/**
+ * A numeric override, or undefined when unset or unparseable.
+ *
+ * Undefined means "use the documented default" rather than 0 -- a typo in a
+ * threshold silently becoming 0 would turn every gate off and flood the
+ * channel, which is exactly the failure worth avoiding here.
+ */
+function numberOr(name: string): number | undefined {
+  const raw = process.env[name];
+  if (raw === undefined || raw.trim() === '') return undefined;
+  const value = Number(raw);
+  if (!Number.isFinite(value)) {
+    console.warn(`${name}='${raw}' is not a number; using the default instead`);
+    return undefined;
+  }
+  return value;
+}
+
 function required(name: string): string {
   const value = process.env[name];
   if (!value) throw new Error(`Missing required env var: ${name}`);
@@ -43,6 +61,25 @@ export const env = {
   // without a key anyone who finds the host owns the wallet list.
   apiKey: required('ENGINE_API_KEY'),
   port: Number(process.env.PORT ?? 8787),
+
+  /**
+   * New-coin scanner. Off unless COIN_SCANNER_ENABLED is 'true', so an
+   * existing deployment gains nothing it did not ask for.
+   *
+   * Every threshold is overridable because spec §12 expects them tuned against
+   * real traffic after launch -- tuning must not need a code change. The
+   * defaults live in @cryptonix/core's DEFAULT_MOMENTUM_THRESHOLDS.
+   */
+  coinScannerEnabled: process.env.COIN_SCANNER_ENABLED === 'true',
+  coinScannerIntervalMs: Number(process.env.COIN_SCANNER_INTERVAL_MS ?? 60_000),
+  coinThresholds: {
+    maxAgeMinutes: numberOr('COIN_MAX_AGE_MINUTES'),
+    minVolume5m: numberOr('COIN_MIN_VOLUME_5M'),
+    minBuyRatio: numberOr('COIN_MIN_BUY_RATIO'),
+    minPriceChange5m: numberOr('COIN_MIN_PRICE_CHANGE_5M'),
+    minTrades5m: numberOr('COIN_MIN_TRADES_5M'),
+    minLiquidityUsd: numberOr('COIN_MIN_LIQUIDITY_USD'),
+  },
 };
 
 // Helius must be able to POST to WEBHOOK_BASE_URL from the public internet.

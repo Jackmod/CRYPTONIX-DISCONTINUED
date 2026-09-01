@@ -6,6 +6,9 @@ import { AlertBus } from './api/alert-bus.js';
 import { WalletMonitor } from './monitors/wallet-monitor.js';
 import { PnlTracker } from './monitors/pnl-tracker.js';
 import { createServer } from './api/server.js';
+import { DexScreenerClient } from './coins/dexscreener.js';
+import { CoinScanner } from './monitors/coin-scanner.js';
+import { DEFAULT_MOMENTUM_THRESHOLDS } from '@cryptonix/core';
 import { attachWebSocket } from './api/ws.js';
 
 async function main() {
@@ -33,6 +36,31 @@ async function main() {
     console.error(`engine failed to listen on :${env.port}`, err);
     process.exit(1);
   });
+
+  // The coin scanner shares only the alert bus, so a failure in it cannot
+  // affect wallet tracking (spec §9). Off by default.
+  if (env.coinScannerEnabled) {
+    const thresholds = { ...DEFAULT_MOMENTUM_THRESHOLDS };
+    for (const [key, value] of Object.entries(env.coinThresholds)) {
+      if (typeof value === 'number') (thresholds as Record<string, number>)[key] = value;
+    }
+
+    const scanner = new CoinScanner(db, new DexScreenerClient(), alertBus, { thresholds });
+    console.log(`coin scanner enabled, polling every ${Math.round(env.coinScannerIntervalMs / 1000)}s`);
+    console.log(`  thresholds: ${JSON.stringify(thresholds)}`);
+
+    const runScan = () => {
+      scanner
+        .poll()
+        .then((published) => {
+          if (published > 0) console.log(`coin scanner: alerted ${published} new coin(s)`);
+        })
+        .catch((err) => console.error('coin scanner poll failed', err));
+    };
+    runScan();
+    const scanTimer = setInterval(runScan, env.coinScannerIntervalMs);
+    scanTimer.unref?.();
+  }
 
   // A websocket-layer failure must not take the whole engine down — wallet
   // monitoring and the REST API keep working without it (spec §9).

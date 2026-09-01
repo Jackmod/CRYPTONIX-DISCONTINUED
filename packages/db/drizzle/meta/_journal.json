@@ -22,6 +22,13 @@
       "when": 1788215797072,
       "tag": "0002_organic_red_hulk",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1788249906613,
+      "tag": "0003_hot_pepper_potts",
+      "breakpoints": true
     }
   ]
 }

@@ -62,3 +62,24 @@ export const clientState = pgTable('client_state', {
   value: text('value').notNull(),
   updatedAt: timestamp('updated_at').notNull().defaultNow(),
 });
+
+/**
+ * Coins the scanner has already considered, so it never alerts the same mint
+ * twice.
+ *
+ * Keyed by mint rather than by an id: the scanner polls the same discovery
+ * feed every minute and sees the same coins repeatedly, and an in-memory set
+ * would forget everything on restart and re-alert the lot.
+ *
+ * Coins that did NOT pass are recorded too, with `alerted` false — otherwise
+ * every poll re-scores the same rejects forever, and a coin that later crosses
+ * the threshold could still be alerted once by flipping that flag.
+ */
+export const scannedCoins = pgTable('scanned_coins', {
+  mint: text('mint').primaryKey(),
+  symbol: text('symbol').notNull(),
+  alerted: boolean('alerted').notNull().default(false),
+  momentumScore: integer('momentum_score'),
+  firstSeenAt: timestamp('first_seen_at').notNull().defaultNow(),
+  lastCheckedAt: timestamp('last_checked_at').notNull().defaultNow(),
+});

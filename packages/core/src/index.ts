@@ -3,3 +3,4 @@ export * from './wallet-parsing/parse-swap.js'; // re-exports the ./wallet-parsi
 export * from './pnl/fifo.js';
 export * from './pnl/summarize.js';
 export * from './pnl/heatmap.js';
+export * from './coins/momentum.js';
