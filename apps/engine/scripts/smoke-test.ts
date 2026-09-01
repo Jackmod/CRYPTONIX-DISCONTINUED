@@ -76,6 +76,19 @@ function requireWebhookSecret(): string {
 }
 const WEBHOOK_SECRET = requireWebhookSecret();
 
+// Every engine route except /webhooks/helius, and the alert socket itself,
+// now require the engine API key. Without it this script gets 401s that look
+// like the engine is broken when it is simply protected.
+const API_KEY = (() => {
+  const key = process.env.ENGINE_API_KEY;
+  if (!key) {
+    console.error('ENGINE_API_KEY is not set. Add it to .env (it must match the value the engine runs with).');
+    process.exit(1);
+  }
+  return key;
+})();
+const authed = { 'Content-Type': 'application/json', Authorization: `Bearer ${API_KEY}` };
+
 function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error(`Timed out after ${ms}ms waiting for: ${label}`)), ms);
@@ -96,7 +109,7 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
 async function createWalletViaApi(address: string, label: string): Promise<{ status: number; body: any }> {
   const res = await fetch(`${BASE}/wallets`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: authed,
     body: JSON.stringify({ address, label, isMine: true }),
   });
   const body = await res.json();
@@ -112,13 +125,24 @@ async function createWalletDirectly(address: string, label: string) {
 }
 
 async function main() {
-  const ws = new WebSocket(`ws://localhost:${PORT}/ws`);
+  const ws = new WebSocket(`ws://localhost:${PORT}/ws`, { headers: { Authorization: `Bearer ${API_KEY}` } });
   const alertReceived = new Promise<any>((resolve) => {
     ws.on('message', (data) => resolve(JSON.parse(data.toString())));
   });
-  await new Promise((resolve, reject) => {
-    ws.on('open', resolve);
-    ws.on('error', reject);
+  await new Promise<void>((resolve, reject) => {
+    ws.on('open', () => resolve());
+    ws.on('error', (err: Error) => {
+      // The alert socket authenticates with the same ENGINE_API_KEY as the
+      // REST calls and is opened first, so a key mismatch surfaces here as a
+      // raw "Unexpected server response: 401" long before the REST branch
+      // that explains it. Name the cause at the point it actually fails.
+      if (err.message.includes('401')) {
+        console.error('\nFAILED: the engine rejected our credentials on the alert socket.');
+        console.error('   ENGINE_API_KEY in .env must match the value the running engine started with.');
+        process.exit(1);
+      }
+      reject(err);
+    });
   });
 
   console.log('1. Creating a wallet...' + (SKIP_HELIUS ? ' (--skip-helius: inserting directly, no Helius call)' : ''));
@@ -129,9 +153,61 @@ async function main() {
     wallet = await createWalletDirectly(address, 'Smoke Test Wallet (--skip-helius)');
     console.log('   Inserted directly via drizzle:', wallet);
   } else {
-    const { status, body } = await createWalletViaApi('SmokeTestWallet111', 'Smoke Test Wallet');
+    // Must be a real base58 pubkey: POST /wallets validates the address before
+    // registering a webhook, so a placeholder like 'SmokeTestWallet111' (the
+    // 'l' is not in the base58 alphabet) is rejected with 400 every time.
+    //
+    // Deliberately NOT a well-known address. This registers a live Helius
+    // `enhanced`/SWAP webhook, so pointing it at something busy (wrapped SOL,
+    // say) would have Helius flood /webhooks/helius indefinitely and make
+    // every run backfill 20 pages of that account's history. This is
+    // PublicKey(Buffer.alloc(32, 7)) — structurally valid, and an account
+    // nobody holds the key to, so it never trades.
+    const SMOKE_ADDRESS = 'US517G5965aydkZ46HS38QLi7UQiSojurfbQfKCELFx';
+
+    let { status, body } = await createWalletViaApi(SMOKE_ADDRESS, 'Smoke Test Wallet');
+
+    if (status === 409) {
+      // Left over from a previous run. Untrack and retry so the script is
+      // repeatable rather than passing only against a clean database.
+      console.log('   Already tracked from an earlier run; untracking and retrying...');
+      const cleanup = await fetch(`${BASE}/wallets/${body.wallet.id}`, { method: 'DELETE', headers: authed });
+      if (!cleanup.ok) {
+        // Silently ignoring this would land us back in the generic branch
+        // below, reporting a cleanup failure as a missing HELIUS_API_KEY.
+        console.log(`\nFAILED: could not remove the leftover wallet (DELETE returned ${cleanup.status}).`);
+        console.log('   Remove it by hand, or re-run with --skip-helius.');
+        ws.close();
+        process.exit(1);
+      }
+      ({ status, body } = await createWalletViaApi(SMOKE_ADDRESS, 'Smoke Test Wallet'));
+    }
+
     if (status !== 201) {
       console.log(`   POST /wallets returned ${status}:`, body);
+      // Distinguish the failure modes. Reporting an auth or validation problem
+      // as "needs a real HELIUS_API_KEY" sends you chasing the wrong thing.
+      if (status === 401) {
+        console.log('\nFAILED: the engine rejected our credentials.');
+        console.log('   ENGINE_API_KEY in .env must match the value the running engine started with.');
+        ws.close();
+        process.exit(1);
+      }
+      if (status === 400) {
+        console.log('\nFAILED: the engine rejected the request as invalid - see the error above.');
+        ws.close();
+        process.exit(1);
+      }
+      if (status === 502) {
+        // Helius refused and the engine passed its reason through. By far the
+        // most common cause is a WEBHOOK_BASE_URL Helius cannot reach.
+        console.log('\nSKIPPED: Helius refused to register the webhook.');
+        console.log('   WEBHOOK_BASE_URL must be a public https URL that Helius can POST to.');
+        console.log('   Run `ngrok http 8787`, put that https URL in .env, restart the engine, and retry.');
+        console.log('   Or re-run with --skip-helius to exercise webhook -> alert -> WebSocket -> REST without Helius.');
+        ws.close();
+        process.exit(1);
+      }
       console.log(
         '\nSKIPPED: wallet registration needs a real HELIUS_API_KEY in .env — the rest of the flow was not exercised'
       );
@@ -169,10 +245,22 @@ async function main() {
   }
 
   console.log('4. Checking trade history via REST...');
-  const tradesRes = await fetch(`${BASE}/wallets/${wallet.id}/trades`);
+  const tradesRes = await fetch(`${BASE}/wallets/${wallet.id}/trades`, { headers: authed });
   const trades = await tradesRes.json();
   console.log('   Trades:', trades);
   if (trades.length !== 1) throw new Error('Expected exactly 1 trade');
+
+  // Clean up after ourselves. On the non-skip path this wallet holds a live
+  // Helius webhook against the free tier's address cap; leaving it behind
+  // means every run permanently consumes another slot.
+  console.log('5. Untracking the smoke-test wallet...');
+  const cleanup = await fetch(`${BASE}/wallets/${wallet.id}`, { method: 'DELETE', headers: authed });
+  if (cleanup.ok) {
+    console.log('   Removed, and its Helius webhook released.');
+  } else {
+    console.log(`   WARNING: cleanup returned ${cleanup.status}. Wallet ${wallet.id} is still tracked.`);
+    if (!SKIP_HELIUS) console.log('   It still holds a Helius webhook address slot - remove it by hand.');
+  }
 
   console.log('\nSmoke test passed.' + (SKIP_HELIUS ? ' (--skip-helius: wallet registration itself was NOT exercised)' : ''));
   ws.close();

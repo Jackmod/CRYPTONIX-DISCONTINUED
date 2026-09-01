@@ -1,0 +1,47 @@
+import { describe, it, expect } from 'vitest';
+import { isValidSolanaAddress } from './address';
+
+describe('isValidSolanaAddress', () => {
+  it('accepts real mainnet addresses', () => {
+    // Wrapped SOL mint and the system program - both genuine base58 pubkeys.
+    expect(isValidSolanaAddress('So11111111111111111111111111111111111111112')).toBe(true);
+    expect(isValidSolanaAddress('11111111111111111111111111111111')).toBe(true);
+  });
+
+  it('rejects text that is not an address at all', () => {
+    // Without this, /track wallet address:hello would register a Helius
+    // webhook against nonsense, burn one of the free tier's address slots,
+    // and then silently never alert.
+    expect(isValidSolanaAddress('hello')).toBe(false);
+    expect(isValidSolanaAddress('')).toBe(false);
+    expect(isValidSolanaAddress('   ')).toBe(false);
+  });
+
+  it('rejects base58 strings that decode to the wrong length', () => {
+    // Length-only checks pass this; only a real decode catches it.
+    expect(isValidSolanaAddress('abcdefghijkmnopqrstuvwxyz')).toBe(false);
+  });
+
+  it('rejects characters outside the base58 alphabet', () => {
+    // 0, O, I and l are excluded from base58 precisely to avoid confusion.
+    expect(isValidSolanaAddress('So1111111111111111111111111111111111111111O')).toBe(false);
+  });
+
+  it('rejects an Ethereum address', () => {
+    // Cryptonix is Solana-only (spec §2/§3); a 0x address is a user mistake
+    // worth naming rather than a webhook worth registering.
+    expect(isValidSolanaAddress('0x742d35Cc6634C0532925a3b844Bc454e4438f44e')).toBe(false);
+  });
+
+  it('rejects an address with an embedded null byte', () => {
+    // Written as an escape on purpose: a literal NUL in the source makes git
+    // treat this file as binary and stop showing diffs for it.
+    expect(isValidSolanaAddress('So11111111111111111111111111111111111111112' + '\u0000')).toBe(false);
+  });
+
+  it('does not throw on hostile input', () => {
+    expect(() => isValidSolanaAddress('../../etc/passwd')).not.toThrow();
+    expect(() => isValidSolanaAddress('')).not.toThrow();
+    expect(isValidSolanaAddress('A'.repeat(10_000))).toBe(false);
+  });
+});

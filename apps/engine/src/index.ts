@@ -20,7 +20,7 @@ async function main() {
   const walletMonitor = new WalletMonitor(db, helius, alertBus);
   const pnlTracker = new PnlTracker(db, helius);
 
-  const app = createServer(db, walletMonitor, pnlTracker, alertBus, solanaRpc, env.webhookSecret);
+  const app = createServer(db, walletMonitor, pnlTracker, alertBus, solanaRpc, env.webhookSecret, env.apiKey);
   const server = app.listen(env.port, () => {
     console.log(`cryptonix engine listening on :${env.port}`);
   });
@@ -36,7 +36,7 @@ async function main() {
 
   // A websocket-layer failure must not take the whole engine down — wallet
   // monitoring and the REST API keep working without it (spec §9).
-  const wss = attachWebSocket(server, alertBus);
+  const wss = attachWebSocket(server, alertBus, env.apiKey);
   wss.on('error', (err) => {
     console.error('websocket server error (alerts may be degraded)', err);
   });
