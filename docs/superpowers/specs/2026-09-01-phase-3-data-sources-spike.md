@@ -108,6 +108,42 @@ Both publish onto the alert bus the wallet path already uses, and the bot's
 fan-out already ignores alert types it does not recognise, so neither touches
 existing behaviour.
 
+## 4. What the shipped thresholds actually pass (measured 2026-09-01)
+
+`scripts/threshold-sweep.ts` run three times against live DexScreener, ~02:50
+UTC, 18 coins sampled each time, 14 of them under an hour old:
+
+| threshold set | passed |
+|---|---|
+| default (strict) | **0 / 18**, all three runs |
+| moderate | 2 / 18 |
+| loose | 3 / 18 |
+
+The two gates doing the rejecting are `minVolume5m` ($5,000) and
+`minBuyRatio` (0.60). Worked examples from the sample:
+
+- **LHIW** — 42m old, $10.5k 5m volume, +105% change, 253 trades. Rejected on
+  a 56% buy ratio alone.
+- **Burdick** — 20m old, $15.0k volume, +64% change. Rejected on 51%.
+- **KENDULL** — 76% buy ratio, +69% change, 34 trades. Rejected on $1.7k
+  volume.
+
+So the defaults are not broken — each gate is doing what it says — but a coin
+has to clear all six at once, and on this evidence very few do. Expect the
+scanner to be quiet rather than chatty on the shipped settings.
+
+**This is not enough evidence to move a default.** Three runs inside one
+ten-minute window is a single market condition, and memecoin launches are
+bursty; the sweep script says to sample across different hours before
+changing a gate, and that advice is not being ignored here. Every threshold
+is already overridable from `.env` with no code change (`COIN_MIN_VOLUME_5M`,
+`COIN_MIN_BUY_RATIO`, and the rest), which is exactly what that was for.
+
+Recommended first move once real traffic is being watched: relax
+`COIN_MIN_BUY_RATIO` to 0.55 before touching volume. It is the gate rejecting
+the strongest candidates in this sample, and buy pressure at 55% on 250
+trades is a meaningfully different claim from 55% on six.
+
 ## Open decisions that remain the owner's
 
 1. **Momentum thresholds.** What counts as worth alerting: minimum age, volume,
