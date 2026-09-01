@@ -259,7 +259,7 @@ describe('input validation', () => {
       expect(res.status, `address "${address}" must be rejected`).toBe(400);
     }
 
-    expect(stack.helius.createWalletWebhook).not.toHaveBeenCalled();
+    expect(stack.watchedAddresses()).toEqual([]);
   }, 30_000);
 });
 
@@ -345,7 +345,7 @@ describe('resource exhaustion', () => {
 
     expect(first.status).toBe(201);
     expect(second.status).toBe(409);
-    expect(stack.helius.createWalletWebhook).toHaveBeenCalledTimes(1);
+    expect(stack.watchedAddresses()).toHaveLength(1);
     expect(await stack.engine.listWallets()).toHaveLength(1);
   }, 30_000);
 
@@ -367,10 +367,9 @@ describe('resource exhaustion', () => {
     expect(responses.filter((r) => r.status === 201)).toHaveLength(1);
     expect(await stack.engine.listWallets()).toHaveLength(1);
 
-    // Every webhook created beyond the winner must have been handed back.
-    const created = stack.helius.createWalletWebhook.mock.calls.length;
-    const deleted = stack.helius.deleteWalletWebhook.mock.calls.length;
-    expect(created - deleted).toBe(1);
+    // Concurrent registrations of the SAME address must leave it watched
+    // exactly once — not duplicated, and not handed back by a loser.
+    expect(stack.watchedAddresses()).toEqual([ADDRESSES[0]]);
   }, 30_000);
 
   it('does not re-run a backfill for an address already tracked', async () => {

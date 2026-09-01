@@ -170,7 +170,8 @@ describe('end-to-end: wallet list is shared, not synced', () => {
     await stack.engine.untrackWallet(wallet.id);
 
     expect(await stack.engine.listWallets()).toHaveLength(0);
-    expect(stack.helius.deleteWalletWebhook).toHaveBeenCalledTimes(1);
+    // The effect, not the call: nothing is being watched any more.
+    expect(stack.watchedAddresses()).toEqual([]);
   });
 
   it('does not leak a Helius webhook when a wallet with history is removed', async () => {
@@ -186,7 +187,74 @@ describe('end-to-end: wallet list is shared, not synced', () => {
     await stack.engine.untrackWallet(wallet.id);
 
     expect(await stack.engine.listWallets()).toHaveLength(0);
-    expect(stack.helius.deleteWalletWebhook).toHaveBeenCalledTimes(1);
+    expect(stack.watchedAddresses()).toEqual([]);
+    expect(stack.webhookCount()).toBe(0);
+  });
+});
+
+describe('end-to-end: many wallets at once', () => {
+  it('tracks more wallets than the free tier has webhooks, and alerts on all of them', async () => {
+    // Helius allows FIVE webhooks on the free tier and 100,000 addresses in
+    // each. One webhook per wallet meant the sixth wallet failed; one shared
+    // webhook means the ceiling is the address limit instead.
+    stack = await startStack();
+    stack.startBotAlertPipeline();
+    await stack.engine.setGuildConfig('111111111111111111', '900000000000000011', 'user1');
+    await stack.guildConfigs.load();
+
+    for (const [i, address] of ADDRESSES.entries()) {
+      await stack.engine.trackWallet(address, `Wallet ${i}`, false);
+    }
+
+    expect(await stack.engine.listWallets()).toHaveLength(ADDRESSES.length);
+    // All of them in ONE webhook, which is the whole point.
+    expect(stack.webhookCount()).toBe(1);
+    expect(stack.watchedAddresses().sort()).toEqual([...ADDRESSES].sort());
+
+    await new Promise((r) => setTimeout(r, 150));
+
+    // A trade on every one of them reaches Discord.
+    for (const [i, address] of ADDRESSES.entries()) {
+      await deliver(stack.baseUrl, [
+        buyTx(address, `multi-${i}`, 'Mint111', 1 + i, 1_000, 1_787_000_000 + i),
+      ]);
+    }
+
+    await waitFor(() => stack.posted.length === ADDRESSES.length);
+    const labels = stack.posted.map(
+      (p) => (p.message as { embeds: { toJSON(): { title?: string } }[] }).embeds[0].toJSON().title
+    );
+    for (let i = 0; i < ADDRESSES.length; i++) {
+      expect(labels.some((t) => t?.includes(`Wallet ${i}`))).toBe(true);
+    }
+  }, 30_000);
+
+  it('untracking one wallet leaves the others watched', async () => {
+    stack = await startStack();
+    const first = await stack.engine.trackWallet(ADDRESSES[0], 'First', false);
+    await stack.engine.trackWallet(ADDRESSES[1], 'Second', false);
+
+    await stack.engine.untrackWallet(first.id);
+
+    expect(stack.watchedAddresses()).toEqual([ADDRESSES[1]]);
+    // The shared webhook survives; only the last removal deletes it.
+    expect(stack.webhookCount()).toBe(1);
+  });
+
+  it('follows several X accounts at once, each with its own watermark', async () => {
+    stack = await startStack();
+
+    for (const handle of ['ansem', '@Cobie', 'https://x.com/gainzy222']) {
+      await fetch(`${stack.baseUrl}/handles`, {
+        method: 'POST',
+        headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ handle }),
+      });
+    }
+
+    const res = await fetch(`${stack.baseUrl}/handles`, { headers: authHeaders() });
+    const handles = (await res.json()) as { handle: string }[];
+    expect(handles.map((h) => h.handle)).toEqual(['ansem', 'cobie', 'gainzy222']);
   });
 });
 

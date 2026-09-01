@@ -1,6 +1,7 @@
 import { createDb } from '@cryptonix/db';
 import { env } from './env.js';
 import { HeliusClient } from './helius/client.js';
+import { WalletWebhook } from './helius/wallet-webhook.js';
 import { SolanaRpcClient } from './solana/balance.js';
 import { AlertBus } from './api/alert-bus.js';
 import { WalletMonitor } from './monitors/wallet-monitor.js';
@@ -22,7 +23,10 @@ async function main() {
   });
   const solanaRpc = new SolanaRpcClient(`https://mainnet.helius-rpc.com/?api-key=${env.heliusApiKey}`);
   const alertBus = new AlertBus();
-  const walletMonitor = new WalletMonitor(db, helius, alertBus);
+  // One Helius webhook watches every tracked wallet. A webhook per wallet
+  // capped the free tier at five wallets; one webhook holds 100,000.
+  const walletWebhook = new WalletWebhook(helius);
+  const walletMonitor = new WalletMonitor(db, walletWebhook, alertBus);
   const pnlTracker = new PnlTracker(db, helius);
 
   const app = createServer(

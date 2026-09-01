@@ -43,9 +43,9 @@ describe('engine API', () => {
   /** Like buildApp, but exposes the mocks so a test can assert on Helius calls. */
   function buildAppWithMocks({ alertSettleMs = 0 }: { alertSettleMs?: number } = {}) {
     const helius = {
-      createWalletWebhook: vi.fn().mockResolvedValue('wh_1'),
+      register: vi.fn().mockResolvedValue('wh_1'),
       getTransactionHistory: vi.fn().mockResolvedValue([]),
-      deleteWalletWebhook: vi.fn().mockResolvedValue(undefined),
+      release: vi.fn().mockResolvedValue(undefined),
     } as any;
     const alertBus = new AlertBus();
     const walletMonitor = new WalletMonitor(db, helius, alertBus);
@@ -61,9 +61,9 @@ describe('engine API', () => {
 
   function buildApp(features?: { coinScanner: boolean; tweetMonitor: boolean }) {
     const helius = {
-      createWalletWebhook: vi.fn().mockResolvedValue('wh_1'),
+      register: vi.fn().mockResolvedValue('wh_1'),
       getTransactionHistory: vi.fn().mockResolvedValue([]),
-      deleteWalletWebhook: vi.fn().mockResolvedValue(undefined),
+      release: vi.fn().mockResolvedValue(undefined),
     } as any;
     const alertBus = new AlertBus();
     const walletMonitor = new WalletMonitor(db, helius, alertBus);
@@ -197,7 +197,7 @@ describe('engine API', () => {
     // Helius then considered the batch delivered and never retried it,
     // permanently losing those trades with no re-backfill path.
     const alertBus = new AlertBus();
-    const helius = { createWalletWebhook: vi.fn(), getTransactionHistory: vi.fn() } as any;
+    const helius = { register: vi.fn(), getTransactionHistory: vi.fn() } as any;
     const failingDb = {
       select: () => ({ from: () => Promise.reject(new Error('simulated db outage')) }),
     } as any;
@@ -260,7 +260,7 @@ describe('engine API', () => {
   it('returns 500 rather than crashing when a route throws', async () => {
     const alertBus = new AlertBus();
     const helius = {
-      createWalletWebhook: vi.fn().mockRejectedValue(new Error('helius is down')),
+      register: vi.fn().mockRejectedValue(new Error('helius is down')),
       getTransactionHistory: vi.fn().mockResolvedValue([]),
     } as any;
     const solanaRpc = { getBalanceSol: vi.fn().mockResolvedValue(0) };
@@ -422,7 +422,7 @@ describe('engine API', () => {
     // `Authorization: Bearer ` authenticate every request. That must be a
     // startup failure, never a silently open API.
     const alertBus = new AlertBus();
-    const helius = { createWalletWebhook: vi.fn(), getTransactionHistory: vi.fn(), deleteWalletWebhook: vi.fn() } as any;
+    const helius = { register: vi.fn(), getTransactionHistory: vi.fn(), release: vi.fn() } as any;
     expect(() =>
       createServer(
         db,
@@ -480,7 +480,7 @@ describe('engine API', () => {
     await api(app).post('/wallets').send({ address: VALID_ADDRESS, label: 'First' });
     await api(app).post('/wallets').send({ address: VALID_ADDRESS, label: 'Second' });
 
-    expect(helius.createWalletWebhook).toHaveBeenCalledTimes(1);
+    expect(helius.register).toHaveBeenCalledTimes(1);
     const listRes = await api(app).get('/wallets');
     expect(listRes.body).toHaveLength(1);
   });
@@ -496,8 +496,8 @@ describe('engine API', () => {
     const res = await api(app).post('/wallets').send({ address: VALID_ADDRESS, label: 'X' });
 
     expect(res.status).toBe(500);
-    expect(helius.createWalletWebhook).toHaveBeenCalledTimes(1);
-    expect(helius.deleteWalletWebhook).toHaveBeenCalledTimes(1);
+    expect(helius.register).toHaveBeenCalledTimes(1);
+    expect(helius.release).toHaveBeenCalledTimes(1);
     insertSpy.mockRestore();
   });
 
@@ -505,7 +505,7 @@ describe('engine API', () => {
     // The common cause is a WEBHOOK_BASE_URL Helius cannot reach. Reporting
     // that as "internal error" sends the operator hunting in the database.
     const { app, helius } = buildAppWithMocks();
-    helius.createWalletWebhook.mockRejectedValue(
+    helius.register.mockRejectedValue(
       new HeliusError('Helius webhook create failed: Invalid webhook URL format', 400)
     );
 
@@ -517,7 +517,7 @@ describe('engine API', () => {
 
   it('still answers 500 for a failure that is not from Helius', async () => {
     const { app, helius } = buildAppWithMocks();
-    helius.createWalletWebhook.mockRejectedValue(new Error('something else entirely'));
+    helius.register.mockRejectedValue(new Error('something else entirely'));
 
     const res = await api(app).post('/wallets').send({ address: VALID_ADDRESS, label: 'X' });
 
@@ -549,13 +549,13 @@ describe('engine API', () => {
     const { app, helius } = buildAppWithMocks();
     const created = await api(app).post('/wallets').send({ address: VALID_ADDRESS, label: 'W' });
     await db.execute(`UPDATE wallets SET helius_webhook_id = NULL WHERE id = ${created.body.id}`);
-    helius.createWalletWebhook.mockClear();
+    helius.register.mockClear();
     helius.getTransactionHistory.mockClear();
 
     const res = await api(app).post('/wallets').send({ address: VALID_ADDRESS, label: 'W' });
 
     expect(res.status).toBe(200); // repaired, not created, not a bare conflict
-    expect(helius.createWalletWebhook).toHaveBeenCalledTimes(1);
+    expect(helius.register).toHaveBeenCalledTimes(1);
     await new Promise((r) => setTimeout(r, 100));
     expect(helius.getTransactionHistory).toHaveBeenCalled();
   });
@@ -602,8 +602,8 @@ describe('engine API', () => {
     const { app, helius } = buildAppWithMocks();
     const created = await api(app).post('/wallets').send({ address: VALID_ADDRESS, label: 'W' });
     await db.execute(`UPDATE wallets SET helius_webhook_id = NULL WHERE id = ${created.body.id}`);
-    helius.createWalletWebhook.mockClear();
-    helius.deleteWalletWebhook.mockClear();
+    helius.register.mockClear();
+    helius.release.mockClear();
 
     await Promise.all([
       api(app).post('/wallets').send({ address: VALID_ADDRESS, label: 'W' }),
@@ -611,8 +611,8 @@ describe('engine API', () => {
       api(app).post('/wallets').send({ address: VALID_ADDRESS, label: 'W' }),
     ]);
 
-    const created_ = helius.createWalletWebhook.mock.calls.length;
-    const deleted = helius.deleteWalletWebhook.mock.calls.length;
+    const created_ = helius.register.mock.calls.length;
+    const deleted = helius.release.mock.calls.length;
     // Every webhook beyond the one the winner kept must have been handed back.
     expect(created_ - deleted).toBe(1);
   });

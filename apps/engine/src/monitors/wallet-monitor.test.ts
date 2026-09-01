@@ -8,7 +8,7 @@ const TEST_DB_URL = process.env.TEST_DATABASE_URL ?? 'postgres://postgres:postgr
 const db = createDb(TEST_DB_URL);
 
 function fakeHelius(webhookId = 'wh_1') {
-  return { createWalletWebhook: vi.fn().mockResolvedValue(webhookId) } as any;
+  return { register: vi.fn().mockResolvedValue(webhookId) } as any;
 }
 
 function swapTx(overrides: Partial<HeliusEnhancedTransaction> = {}): HeliusEnhancedTransaction {
@@ -33,7 +33,7 @@ describe('WalletMonitor', () => {
 
     const { wallet } = await monitor.trackWallet('Addr1', 'My Wallet', true);
 
-    expect(helius.createWalletWebhook).toHaveBeenCalledWith('Addr1');
+    expect(helius.register).toHaveBeenCalledWith('Addr1');
     expect(wallet.address).toBe('Addr1');
     expect(wallet.heliusWebhookId).toBe('wh_42');
     expect(wallet.isMine).toBe(true);

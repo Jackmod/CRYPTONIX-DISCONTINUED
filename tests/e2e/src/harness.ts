@@ -1,4 +1,11 @@
-import { createServer as createEngineApp, attachWebSocket, AlertBus, WalletMonitor, PnlTracker } from '@cryptonix/engine';
+import {
+  createServer as createEngineApp,
+  attachWebSocket,
+  AlertBus,
+  WalletMonitor,
+  PnlTracker,
+  WalletWebhook,
+} from '@cryptonix/engine';
 import { createDb } from '@cryptonix/db';
 import { AlertStream, EngineClient, GuildConfigCache, fanOutAlert } from '@cryptonix/discord-bot';
 import type { Server } from 'node:http';
@@ -27,10 +34,16 @@ export interface E2EStack {
   db: ReturnType<typeof createDb>;
   alertBus: AlertBus;
   helius: {
+    listWebhooks: ReturnType<typeof vi.fn>;
     createWalletWebhook: ReturnType<typeof vi.fn>;
+    setWebhookAddresses: ReturnType<typeof vi.fn>;
     deleteWalletWebhook: ReturnType<typeof vi.fn>;
     getTransactionHistory: ReturnType<typeof vi.fn>;
   };
+  /** Every address the shared webhook is watching right now. */
+  watchedAddresses(): string[];
+  /** How many Helius webhooks exist. The free tier allows five. */
+  webhookCount(): number;
   /** Every message the fake Discord layer was asked to post. */
   posted: { channelId: string; message: unknown }[];
   guildConfigs: GuildConfigCache;
@@ -53,14 +66,40 @@ export async function startStack(): Promise<E2EStack> {
     'TRUNCATE alerts, pnl_daily, wallet_trades, wallets, discord_guilds, client_state, tweets, tracked_handles RESTART IDENTITY CASCADE'
   );
 
+  /*
+   * A Helius stand-in that holds real webhook state, wrapped by the REAL
+   * WalletWebhook.
+   *
+   * The point is that every e2e test then exercises the one-shared-webhook
+   * logic. Helius allows five webhooks on the free tier and 100,000 addresses
+   * in each, so a webhook per wallet capped the whole product at five wallets;
+   * a fake that just returned an id would have hidden that completely.
+   */
+  const webhookUrl = 'https://e2e.example/webhooks/helius';
+  const heliusWebhooks: { webhookID: string; webhookURL: string; accountAddresses: string[] }[] = [];
+  let nextWebhookId = 1;
+
   const helius = {
-    createWalletWebhook: vi.fn(async () => `wh_${Math.random().toString(36).slice(2)}`),
-    deleteWalletWebhook: vi.fn(async () => undefined),
+    webhookUrl,
+    listWebhooks: vi.fn(async () => heliusWebhooks.map((w) => ({ ...w, accountAddresses: [...w.accountAddresses] }))),
+    createWalletWebhook: vi.fn(async (addresses: string[]) => {
+      const webhookID = `wh_${nextWebhookId++}`;
+      heliusWebhooks.push({ webhookID, webhookURL: webhookUrl, accountAddresses: [...addresses] });
+      return webhookID;
+    }),
+    setWebhookAddresses: vi.fn(async (id: string, addresses: string[]) => {
+      const hook = heliusWebhooks.find((w) => w.webhookID === id);
+      if (hook) hook.accountAddresses = [...addresses];
+    }),
+    deleteWalletWebhook: vi.fn(async (id: string) => {
+      const at = heliusWebhooks.findIndex((w) => w.webhookID === id);
+      if (at >= 0) heliusWebhooks.splice(at, 1);
+    }),
     getTransactionHistory: vi.fn(async () => []),
   };
 
   const alertBus = new AlertBus();
-  const walletMonitor = new WalletMonitor(db, helius as never, alertBus);
+  const walletMonitor = new WalletMonitor(db, new WalletWebhook(helius), alertBus);
   const pnlTracker = new PnlTracker(db, helius as never);
   const solanaRpc = { getBalanceSol: vi.fn(async () => 1.5) };
 
@@ -105,6 +144,10 @@ export async function startStack(): Promise<E2EStack> {
     helius,
     posted,
     guildConfigs,
+    /** Every address the shared webhook is watching right now. */
+    watchedAddresses: () => [...(heliusWebhooks[0]?.accountAddresses ?? [])],
+    /** How many Helius webhooks exist. The free tier allows five. */
+    webhookCount: () => heliusWebhooks.length,
     startBotAlertPipeline,
     async close() {
       if (closed) return;

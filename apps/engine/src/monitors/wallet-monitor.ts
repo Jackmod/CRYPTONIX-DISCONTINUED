@@ -2,13 +2,18 @@ import type { Db } from '@cryptonix/db';
 import { wallets, walletTrades, pnlDaily, alerts } from '@cryptonix/db';
 import { and, eq, inArray, isNull } from 'drizzle-orm';
 import { parseSwap, buildAxiomLink, type HeliusEnhancedTransaction } from '@cryptonix/core';
-import type { HeliusClient } from '../helius/client.js';
+import type { WalletWebhook } from '../helius/wallet-webhook.js';
 import type { AlertBus } from '../api/alert-bus.js';
 
 export class WalletMonitor {
   constructor(
     private db: Db,
-    private helius: Pick<HeliusClient, 'createWalletWebhook' | 'deleteWalletWebhook'>,
+    /**
+     * One shared Helius webhook, keyed by ADDRESS rather than by webhook id:
+     * every tracked wallet lives in the same webhook now, so an id no longer
+     * identifies which wallet to stop watching.
+     */
+    private helius: Pick<WalletWebhook, 'register' | 'release'>,
     private alertBus: AlertBus
   ) {}
 
@@ -40,7 +45,7 @@ export class WalletMonitor {
         // directly (the smoke test's --skip-helius path). Either way it would
         // sit there answering 409 "already tracked" forever while receiving no
         // alerts. Register a webhook and heal it instead.
-        const healedWebhookId = await this.helius.createWalletWebhook(address);
+        const healedWebhookId = await this.helius.register(address);
 
         let healed: typeof wallets.$inferSelect | undefined;
         try {
@@ -56,18 +61,18 @@ export class WalletMonitor {
             .where(and(eq(wallets.id, existing.id), isNull(wallets.heliusWebhookId)))
             .returning();
         } catch (err) {
-          // Same invariant as the insert path: a webhook exists that no row
-          // references. Release it before the error escapes.
-          await this.releaseWebhook(healedWebhookId);
+          // Same invariant as the insert path: the address is being watched
+          // but no row references it. Stop watching before the error escapes.
+          await this.releaseWebhook(address);
           throw err;
         }
 
         if (!healed) {
           // Either the row was untracked between our SELECT and this UPDATE, or
-          // a concurrent heal claimed it first. Either way the webhook we just
-          // made belongs to nothing: release it and loop, so the next pass
+          // a concurrent heal claimed it first. Either way the registration we
+          // just made belongs to nothing: release it and loop, so the next pass
           // sees the real current state.
-          await this.releaseWebhook(healedWebhookId);
+          await this.releaseWebhook(address);
           continue;
         }
 
@@ -80,7 +85,7 @@ export class WalletMonitor {
         return { wallet: healed, created: false, healed: true };
       }
 
-      const webhookId = await this.helius.createWalletWebhook(address);
+      const webhookId = await this.helius.register(address);
 
       let inserted: typeof wallets.$inferSelect | undefined;
       try {
@@ -90,16 +95,18 @@ export class WalletMonitor {
           .onConflictDoNothing()
           .returning();
       } catch (err) {
-        // The webhook exists but no row references it. Release it before the
-        // error propagates, or it is orphaned for good.
-        await this.releaseWebhook(webhookId);
+        // The address is being watched but no row references it. Release it
+        // before the error propagates, or it is watched for good.
+        await this.releaseWebhook(address);
         throw err;
       }
 
       if (inserted) return { wallet: inserted, created: true, healed: false };
 
-      // ON CONFLICT: a concurrent request won. Give our webhook back.
-      await this.releaseWebhook(webhookId);
+      // ON CONFLICT: a concurrent request won — and it registered the SAME
+      // address, so releasing here would stop watching the wallet it just
+      // tracked. Registration is idempotent per address, so there is nothing
+      // to give back.
 
       const [raced] = await this.db.select().from(wallets).where(eq(wallets.address, address));
       if (raced) return { wallet: raced, created: false, healed: false };
@@ -110,10 +117,10 @@ export class WalletMonitor {
     throw new Error(`could not register ${address}: it was concurrently added and removed twice`);
   }
 
-  /** Best-effort webhook release; never masks the error that caused it. */
-  private async releaseWebhook(webhookId: string): Promise<void> {
-    await this.helius.deleteWalletWebhook(webhookId).catch((err) => {
-      console.error(`could not release orphaned webhook ${webhookId}`, err);
+  /** Best-effort release of one address; never masks the error that caused it. */
+  private async releaseWebhook(address: string): Promise<void> {
+    await this.helius.release(address).catch((err) => {
+      console.error(`could not stop watching orphaned address ${address}`, err);
     });
   }
 
@@ -132,7 +139,7 @@ export class WalletMonitor {
     if (!wallet) return false;
 
     if (wallet.heliusWebhookId) {
-      await this.helius.deleteWalletWebhook(wallet.heliusWebhookId);
+      await this.helius.release(wallet.address);
       // Record that the webhook is gone before touching anything else. If the
       // row deletions below fail, the wallet survives with a NULL webhook id,
       // which is the truth — and trackWallet heals that state. Leaving the
@@ -164,13 +171,14 @@ export class WalletMonitor {
     await this.db.delete(walletTrades).where(eq(walletTrades.walletId, walletId));
 
     // RETURNING, so we see the row's FINAL state. A /track interleaved with
-    // this untrack takes the self-heal path (the id was nulled above), creates
-    // a fresh webhook and writes it here — after we already released the old
-    // one. Without this the new webhook is orphaned against the address cap.
+    // this untrack takes the self-heal path (the id was nulled above),
+    // re-registers the address and writes the id here — after we already
+    // released it. Without this the address stays watched for a wallet that no
+    // longer exists, and its trades arrive with nothing to attribute them to.
     const [deleted] = await this.db.delete(wallets).where(eq(wallets.id, walletId)).returning();
     if (deleted?.heliusWebhookId) {
-      console.warn(`wallet ${walletId} gained webhook ${deleted.heliusWebhookId} while being untracked; releasing it`);
-      await this.releaseWebhook(deleted.heliusWebhookId);
+      console.warn(`wallet ${walletId} was re-registered while being untracked; releasing ${deleted.address}`);
+      await this.releaseWebhook(deleted.address);
     }
     return true;
   }

@@ -16,7 +16,7 @@ describe('HeliusClient', () => {
     });
     const client = new HeliusClient({ apiKey: 'key1', webhookBaseUrl: 'https://example.com', webhookSecret: 'secret1', clock: instantClock });
 
-    const id = await client.createWalletWebhook('Addr1');
+    const id = await client.createWalletWebhook(['Addr1']);
 
     expect(id).toBe('wh_123');
     const [url, options] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
@@ -34,7 +34,7 @@ describe('HeliusClient', () => {
     });
     const client = new HeliusClient({ apiKey: 'key1', webhookBaseUrl: 'https://example.com', webhookSecret: 'my-secret', clock: instantClock });
 
-    await client.createWalletWebhook('Addr1');
+    await client.createWalletWebhook(['Addr1']);
 
     const [, options] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
     expect(JSON.parse(options.body).authHeader).toBe('my-secret');
@@ -44,7 +44,52 @@ describe('HeliusClient', () => {
     (fetch as ReturnType<typeof vi.fn>).mockResolvedValue({ ok: false, status: 400, text: async () => 'bad request' });
     const client = new HeliusClient({ apiKey: 'key1', webhookBaseUrl: 'https://example.com', webhookSecret: 'secret1', clock: instantClock });
 
-    await expect(client.createWalletWebhook('Addr1')).rejects.toThrow('Helius webhook create failed');
+    await expect(client.createWalletWebhook(['Addr1'])).rejects.toThrow('Helius webhook create failed');
+  });
+
+  it('lists webhooks so ours can be found by its delivery URL', async () => {
+    (fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: true,
+      json: async () => [{ webhookID: 'wh_1', webhookURL: 'https://example.com/webhooks/helius' }],
+    });
+    const client = new HeliusClient({ apiKey: 'key1', webhookBaseUrl: 'https://example.com', webhookSecret: 's', clock: instantClock });
+
+    const webhooks = await client.listWebhooks();
+
+    expect(webhooks[0].webhookID).toBe('wh_1');
+    expect(webhooks[0].webhookURL).toBe(client.webhookUrl);
+  });
+
+  it('survives a webhook list that is not an array', async () => {
+    (fetch as ReturnType<typeof vi.fn>).mockResolvedValue({ ok: true, json: async () => ({}) });
+    const client = new HeliusClient({ apiKey: 'key1', webhookBaseUrl: 'https://e.com', webhookSecret: 's', clock: instantClock });
+
+    await expect(client.listWebhooks()).resolves.toEqual([]);
+  });
+
+  it('replaces the whole address list, because PUT does not append', async () => {
+    (fetch as ReturnType<typeof vi.fn>).mockResolvedValue({ ok: true, status: 200, json: async () => ({}) });
+    const client = new HeliusClient({ apiKey: 'key1', webhookBaseUrl: 'https://example.com', webhookSecret: 'my-secret', clock: instantClock });
+
+    await client.setWebhookAddresses('wh_1', ['A', 'B']);
+
+    const [url, options] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(url).toContain('/webhooks/wh_1?api-key=key1');
+    expect(options.method).toBe('PUT');
+    const body = JSON.parse(options.body);
+    expect(body.accountAddresses).toEqual(['A', 'B']);
+    // The secret has to be re-sent: a PUT that omitted it would leave the
+    // webhook delivering with no Authorization header, and every delivery
+    // would then be rejected by our own route.
+    expect(body.authHeader).toBe('my-secret');
+    expect(body.transactionTypes).toEqual(['SWAP']);
+  });
+
+  it('throws when the address update fails, so the caller does not assume it took', async () => {
+    (fetch as ReturnType<typeof vi.fn>).mockResolvedValue({ ok: false, status: 400, headers: { get: () => null }, text: async () => 'bad' });
+    const client = new HeliusClient({ apiKey: 'key1', webhookBaseUrl: 'https://e.com', webhookSecret: 's', clock: instantClock });
+
+    await expect(client.setWebhookAddresses('wh_1', ['A'])).rejects.toThrow('Helius webhook update failed');
   });
 
   it('fetches transaction history', async () => {
@@ -164,7 +209,7 @@ describe('HeliusClient', () => {
     fetchMock.mockResolvedValue({ ok: false, status: 503, headers: { get: () => null }, text: async () => 'unavailable' });
     const client = new HeliusClient({ apiKey: 'key1', webhookBaseUrl: 'https://e.com', webhookSecret: 's', clock: instantClock });
 
-    await expect(client.createWalletWebhook('Addr1')).rejects.toThrow('Helius webhook create failed');
+    await expect(client.createWalletWebhook(['Addr1'])).rejects.toThrow('Helius webhook create failed');
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
@@ -176,7 +221,7 @@ describe('HeliusClient', () => {
       .mockResolvedValueOnce({ ok: true, status: 200, headers: { get: () => null }, json: async () => ({ webhookID: 'wh_9' }) });
     const client = new HeliusClient({ apiKey: 'key1', webhookBaseUrl: 'https://e.com', webhookSecret: 's', clock: instantClock });
 
-    expect(await client.createWalletWebhook('Addr1')).toBe('wh_9');
+    expect(await client.createWalletWebhook(['Addr1'])).toBe('wh_9');
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
@@ -198,7 +243,7 @@ describe('HeliusClient', () => {
       clock: instantClock,
     });
 
-    const error = await client.createWalletWebhook('Addr1').catch((e) => e);
+    const error = await client.createWalletWebhook(['Addr1']).catch((e) => e);
 
     expect(error.message).not.toContain('super-secret-value');
     expect(error.message).not.toContain('my-api-key');

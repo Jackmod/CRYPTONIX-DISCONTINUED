@@ -26,6 +26,13 @@ export class HeliusError extends Error {
   }
 }
 
+/** The fields of a webhook this engine reads back. */
+export interface HeliusWebhook {
+  webhookID: string;
+  webhookURL: string;
+  accountAddresses?: string[];
+}
+
 export interface HeliusClientConfig {
   apiKey: string;
   webhookBaseUrl: string;
@@ -120,28 +127,79 @@ export class HeliusClient {
     }
   }
 
-  async createWalletWebhook(address: string): Promise<string> {
+  /** Our own delivery URL — the one value that identifies our webhook. */
+  get webhookUrl(): string {
+    return `${this.config.webhookBaseUrl}/webhooks/helius`;
+  }
+
+  /** Every webhook on the account, so ours can be found by its URL. */
+  async listWebhooks(): Promise<HeliusWebhook[]> {
+    const res = await this.fetchWithRetry(`${HELIUS_BASE}/webhooks?api-key=${this.config.apiKey}`, {
+      method: 'GET',
+    });
+    if (!res.ok) throw new HeliusError(`Helius webhook list failed: ${this.redact(await res.text())}`, res.status);
+    const data = (await res.json()) as HeliusWebhook[];
+    return Array.isArray(data) ? data : [];
+  }
+
+  /**
+   * Creates the shared wallet webhook around an initial set of addresses.
+   *
+   * One webhook watches every tracked wallet. The free tier allows five
+   * webhooks but a hundred thousand addresses in each, so a webhook per wallet
+   * would have capped the whole product at five wallets while using a
+   * thousandth of what one webhook holds.
+   */
+  async createWalletWebhook(addresses: string[]): Promise<string> {
     const res = await this.fetchWithRetry(
       `${HELIUS_BASE}/webhooks?api-key=${this.config.apiKey}`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          webhookURL: `${this.config.webhookBaseUrl}/webhooks/helius`,
+          webhookURL: this.webhookUrl,
           transactionTypes: ['SWAP'],
-          accountAddresses: [address],
+          accountAddresses: addresses,
           webhookType: 'enhanced',
           authHeader: this.config.webhookSecret,
         }),
       },
       // Creating a webhook is not idempotent: on a 5xx Helius may have created
       // it and failed on the way back, and a retry would create a second one
-      // whose id we never learn — orphaning the first against the address cap.
+      // whose id we never learn — orphaning the first against the webhook cap.
       { retryOnServerError: false }
     );
     if (!res.ok) throw new HeliusError(`Helius webhook create failed: ${this.redact(await res.text())}`, res.status);
     const data = (await res.json()) as { webhookID: string };
     return data.webhookID;
+  }
+
+  /**
+   * Replaces the watched address list.
+   *
+   * PUT replaces rather than appends, so callers must send the whole set. That
+   * makes every edit a read-modify-write, which is why WalletWebhook
+   * serialises them.
+   */
+  async setWebhookAddresses(webhookId: string, addresses: string[]): Promise<void> {
+    const res = await this.fetchWithRetry(
+      `${HELIUS_BASE}/webhooks/${webhookId}?api-key=${this.config.apiKey}`,
+      {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          webhookURL: this.webhookUrl,
+          transactionTypes: ['SWAP'],
+          accountAddresses: addresses,
+          webhookType: 'enhanced',
+          authHeader: this.config.webhookSecret,
+        }),
+      },
+      // Unlike create, this IS idempotent: it sets an exact list, so replaying
+      // it lands on the same state.
+      { retryOnServerError: true }
+    );
+    if (!res.ok) throw new HeliusError(`Helius webhook update failed: ${this.redact(await res.text())}`, res.status);
   }
 
   /**

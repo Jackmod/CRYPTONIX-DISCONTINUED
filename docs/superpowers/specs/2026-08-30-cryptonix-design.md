@@ -247,9 +247,14 @@ Discord bot.
 
 - Twitter scraper API choice not yet finalized — pick during Phase 3
   based on current pricing/reliability at build time.
-- Helius free-tier webhook address cap is not exactly known ahead of
-  build; engine design accounts for surfacing "at capacity" rather than
-  assuming an exact number.
+- ~~Helius free-tier webhook address cap is not exactly known ahead of
+  build~~ — **resolved 2026-09-01.** Helius documents 5 webhooks on the
+  free tier (50 on paid) and 100,000 addresses per webhook. The engine
+  originally created one webhook per wallet, which capped the whole
+  product at five tracked wallets while using a twenty-thousandth of what
+  a single webhook holds. It now keeps ONE shared webhook and edits its
+  address list, so the ceiling is 100,000 wallets. Management calls cost
+  100 credits each, so adding a wallet is one edit rather than one create.
 - Momentum-scoring thresholds for the coin scanner will need real-world
   tuning after launch — v1 ships with a reasonable starting formula, not
   a promise of optimality. Measured against live DexScreener on

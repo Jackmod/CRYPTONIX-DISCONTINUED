@@ -238,6 +238,19 @@ puts the engine on the internet. Accordingly:
 Keep the engine behind ngrok rather than a permanently open port, and treat
 `ENGINE_API_KEY`, `WEBHOOK_SECRET` and `DISCORD_TOKEN` as passwords.
 
+## How many can it track?
+
+**Wallets: 100,000.** All of them share one Helius webhook, which the engine
+creates on the first `/track wallet` and edits from then on. Helius allows five
+webhooks on the free tier and 100,000 addresses in each, so the original design
+of one webhook per wallet would have stopped at five.
+
+**X accounts: no fixed limit**, but each one costs polling. The provider
+charges a floor fee per call whether or not a tweet comes back, so twenty
+handles every two minutes is roughly $65/month against under a dollar for the
+tweets themselves. Past a handful, move to their webhook filter rules, which
+push instead and bill nothing for silence.
+
 ## Free-tier limits
 
 Cryptonix is built to run on free tiers (spec §7). Helius allows 10 requests a
