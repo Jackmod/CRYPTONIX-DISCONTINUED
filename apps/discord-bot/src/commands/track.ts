@@ -1,6 +1,6 @@
 import { InteractionContextType, PermissionFlagsBits, SlashCommandBuilder } from 'discord.js';
 import { normalizeHandle } from '@cryptonix/core';
-import { describeError, shortAddress, type BotCommand } from './types.js';
+import { describeError, escapeInline, inlineCode, shortAddress, type BotCommand } from './types.js';
 
 export const trackCommand: BotCommand = {
   data: new SlashCommandBuilder()
@@ -57,14 +57,15 @@ export const trackCommand: BotCommand = {
     try {
       const wallet = await engine.trackWallet(address, label, isMine);
       await interaction.editReply(
-        `✅ Tracking **${wallet.label}** (\`${shortAddress(wallet.address)}\`). Historical backfill has started.`
+        `✅ Tracking **${escapeInline(wallet.label)}** (${inlineCode(shortAddress(wallet.address))}). ` +
+          'Historical backfill has started.'
       );
     } catch (err) {
       // 409 means the engine already tracks this address. That is a normal
       // outcome of typing the same command twice, not a failure worth an
       // alarming error message.
       if ((err as { status?: number }).status === 409) {
-        await interaction.editReply(`ℹ️ \`${shortAddress(address)}\` is already tracked.`);
+        await interaction.editReply(`ℹ️ ${inlineCode(shortAddress(address))} is already tracked.`);
         return;
       }
       await interaction.editReply(describeError(err));
@@ -94,7 +95,7 @@ async function trackTwitter(
   const input = interaction.options.getString('handle', true);
   const handle = normalizeHandle(input);
   if (handle === null) {
-    await interaction.editReply(`⚠️ \`${input.replaceAll('`', '')}\` is not an X handle.`);
+    await interaction.editReply(`⚠️ ${inlineCode(input)} is not an X handle.`);
     return;
   }
 

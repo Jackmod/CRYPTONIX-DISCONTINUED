@@ -1,6 +1,14 @@
 import { InteractionContextType, PermissionFlagsBits, SlashCommandBuilder } from 'discord.js';
 import { normalizeHandle } from '@cryptonix/core';
-import { describeError, displayLabel, shortAddress, walletChoices, type BotCommand } from './types.js';
+import {
+  describeError,
+  displayLabel,
+  escapeInline,
+  inlineCode,
+  shortAddress,
+  walletChoices,
+  type BotCommand,
+} from './types.js';
 
 export const untrackCommand: BotCommand = {
   data: new SlashCommandBuilder()
@@ -78,13 +86,13 @@ export const untrackCommand: BotCommand = {
       const wallets = await engine.listWallets();
       const wallet = wallets.find((w) => w.address === address);
       if (!wallet) {
-        await interaction.editReply(`⚠️ \`${shortAddress(address)}\` is not tracked.`);
+        await interaction.editReply(`⚠️ ${inlineCode(shortAddress(address))} is not tracked.`);
         return;
       }
 
       await engine.untrackWallet(wallet.id);
       await interaction.editReply(
-        `🗑️ Stopped tracking **${displayLabel(wallet)}** and released its Helius webhook.`
+        `🗑️ Stopped tracking **${escapeInline(displayLabel(wallet))}** and released its Helius webhook.`
       );
     } catch (err) {
       await interaction.editReply(describeError(err));
@@ -118,7 +126,7 @@ async function untrackTwitter(
   const input = interaction.options.getString('handle', true);
   const handle = normalizeHandle(input);
   if (handle === null) {
-    await interaction.editReply(`⚠️ \`${input.replaceAll('`', '')}\` is not an X handle.`);
+    await interaction.editReply(`⚠️ ${inlineCode(input)} is not an X handle.`);
     return;
   }
 

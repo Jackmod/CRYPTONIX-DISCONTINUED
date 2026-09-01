@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { buildWalletsEmbed, walletsCommand } from './wallets';
 import { untrackCommand } from './untrack';
 import { pnlCommand } from './pnl';
-import { walletChoices, MAX_CHOICES } from './types';
+import { walletChoices, escapeInline, inlineCode, MAX_CHOICES } from './types';
 import { EngineError } from '../engine/client';
 import type { Wallet } from '../engine/client';
 
@@ -238,5 +238,29 @@ describe('/wallets', () => {
   it('is registered as guild-only', () => {
     const json = walletsCommand.data.toJSON() as { contexts?: number[] };
     expect(json.contexts).toEqual([0]);
+  });
+});
+
+describe('escaping text that came from somewhere else', () => {
+  it('defuses a masked link, which an embed would render', () => {
+    expect(escapeInline('[click](https://evil.example)')).toBe('\\[click](https://evil.example)');
+  });
+
+  it('shows a label literally rather than styling the reply around it', () => {
+    expect(escapeInline('**pwned**')).toBe('\\*\\*pwned\\*\\*');
+  });
+
+  it('leaves ordinary text alone', () => {
+    expect(escapeInline('bonk whale')).toBe('bonk whale');
+  });
+
+  it('removes the one character that can escape a code span', () => {
+    // shortAddress echoes anything under 12 characters back verbatim, so a
+    // backtick typed into /untrack would otherwise close the span.
+    expect(inlineCode('a`b')).toBe('`ab`');
+  });
+
+  it('wraps ordinary text in a code span unchanged', () => {
+    expect(inlineCode('AAAA…1111')).toBe('`AAAA…1111`');
   });
 });

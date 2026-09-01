@@ -1,6 +1,6 @@
 import { InteractionContextType, SlashCommandBuilder } from 'discord.js';
 import { buildPnlReply } from '../embeds/pnl.js';
-import { describeError, displayLabel, walletChoices, type BotCommand } from './types.js';
+import { describeError, displayLabel, inlineCode, walletChoices, type BotCommand } from './types.js';
 
 const MONTH_PATTERN = /^(\d{4})-(\d{2})$/;
 
@@ -78,9 +78,7 @@ export const pnlCommand: BotCommand = {
       if (!wallet) {
         await interaction.editReply(
           walletQuery
-            // Backticks in the query would break out of the code span it is
-            // shown in; nothing else here is user-controlled.
-            ? `⚠️ No tracked wallet matches \`${walletQuery.replaceAll('`', '')}\`.`
+            ? `⚠️ No tracked wallet matches ${inlineCode(walletQuery)}.`
             : '⚠️ No wallets are tracked yet. Add one with `/track wallet`.'
         );
         return;

@@ -1,3 +1,4 @@
+import { escapeMarkdown } from 'discord.js';
 import type { AutocompleteInteraction, ChatInputCommandInteraction } from 'discord.js';
 import type { EngineClient } from '../engine/client.js';
 import type { GuildConfigCache } from '../guilds/config-cache.js';
@@ -69,6 +70,33 @@ export function describeError(err: unknown): string {
   // words meant for a person - show it rather than a generic failure.
   if (status === 400) return `⚠️ ${(err as Error).message ?? 'invalid request'}`;
   return `⚠️ Engine error: ${(err as Error).message ?? String(err)}`;
+}
+
+/**
+ * Neutralises markdown in text that came from somewhere else.
+ *
+ * The wallet list is shared by every server the bot is in, so a label typed by
+ * one server's admin — or by whoever runs the desktop app — is echoed into
+ * replies in all the others. `maskedLink` is passed because discord.js leaves
+ * it off by default; it does not render in a plain message the way it does in
+ * an embed, but the same helper is used in both places and only one of them
+ * would be safe without it.
+ */
+export function escapeInline(text: string): string {
+  return escapeMarkdown(text, { maskedLink: true, heading: true, bulletedList: true, numberedList: true });
+}
+
+/**
+ * Wraps text in a code span, having removed the one character that can escape
+ * one.
+ *
+ * A short address is echoed back verbatim — shortAddress only truncates when
+ * it is longer than twelve characters — so a backtick typed into
+ * `/untrack wallet address:` would otherwise close the span and let the rest
+ * of the reply be styled.
+ */
+export function inlineCode(text: string): string {
+  return `\`${text.replaceAll('`', '')}\``;
 }
 
 export function shortAddress(address: string): string {
